@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import replace
 from typing import Any
@@ -21,7 +20,6 @@ from metaculus_bot.constants import (
     DOCUMENT_TEXT_PDF_MAX_BYTES,
     GAP_FILL_V2_READER_MODEL,
     GAP_FILL_V2_READER_THINKING_LEVEL,
-    GOOGLE_API_KEY_ENV,
     RESOLUTION_SOURCE_DERIVED_API_MIN_BUDGET_S,
     RESOLUTION_SOURCE_HTTP_TIMEOUT,
     RESOLUTION_SOURCE_IMPERSONATE_MIN_BUDGET_S,
@@ -39,6 +37,7 @@ from metaculus_bot.constants import (
 from metaculus_bot.research import derived_api, impersonated_fetch, resolution_presentation
 from metaculus_bot.research.fetch_ladder import classify, context, direct_fetch, guard, run_cache
 from metaculus_bot.research.fetch_ladder.policy import LadderPolicy
+from metaculus_bot.research.gemini_client_config import google_genai_credentials
 from metaculus_bot.research.http_fetch import decode_text_body
 from metaculus_bot.research.impersonated_fetch import (
     ImpersonateBudgetExhausted,
@@ -1020,8 +1019,8 @@ async def _url_context_robots_skip(
 
 async def _url_context_admission(
     session: Any, url: str, direct: FetchResult, *, host_sems: dict[str, asyncio.Semaphore], ctx: context.LadderContext
-) -> tuple[str, float] | None:
-    """Every gate the paid read has to clear, in increasing cost order; ``(api_key, budget_s)`` or None.
+) -> tuple[str, bool, float] | None:
+    """Every gate the paid read has to clear, in increasing cost order; ``(api_key, vertexai, budget_s)`` or None.
 
     The trigger population, the flag (default off in code, on in every bot workflow), the question's
     time-budget fast path, the API key, the wall budget, then the per-host ``Google-Extended``
@@ -1048,15 +1047,15 @@ async def _url_context_admission(
         # flag-off run never reports spend avoided on a rung that could not have fired.
         context._skip_for_fast_path(ctx, "url_context", direct, url)
         return None
-    api_key = os.getenv(GOOGLE_API_KEY_ENV)
-    if not api_key:
+    credentials = google_genai_credentials()
+    if credentials is None:
         logger.info(
-            "resolution_source: url_context rung is enabled but %s is not set — skipping %s",
-            GOOGLE_API_KEY_ENV,
+            "resolution_source: url_context rung is enabled but neither GCP_API_KEY_1 nor GOOGLE_API_KEY is set — skipping %s",
             urlparse(url).netloc,
         )
         ctx.skip_rung("url_context", direct.status, url, "no_api_key")
         return None
+    api_key, vertexai = credentials
     if ctx.claim_rung_budget("url_context", direct.status, url, RESOLUTION_SOURCE_URL_CONTEXT_MIN_BUDGET_S) is None:
         return None
     if await _url_context_robots_skip(session, url, host_sems, ctx):
@@ -1084,7 +1083,7 @@ async def _url_context_admission(
         )
         ctx.skip_rung("url_context", direct.status, url, "url_context_cap")
         return None
-    return api_key, budget_s
+    return api_key, vertexai, budget_s
 
 
 def _withheld_reply_preview(reply: str) -> str:
@@ -1127,7 +1126,7 @@ async def _url_context_rung(
     admitted = await _url_context_admission(session, url, direct, host_sems=host_sems, ctx=ctx)
     if admitted is None:
         return None
-    api_key, budget_s = admitted
+    api_key, vertexai, budget_s = admitted
     ctx.start_rung("url_context", direct.status, url)
     try:
         text, n_retrievals, statuses = await asyncio.wait_for(
@@ -1136,6 +1135,7 @@ async def _url_context_rung(
                 url,
                 ctx.query,
                 api_key=api_key,
+                vertexai=vertexai,
                 role="resolution_source",
                 model=GAP_FILL_V2_READER_MODEL,
                 thinking_level=GAP_FILL_V2_READER_THINKING_LEVEL,

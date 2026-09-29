@@ -202,6 +202,29 @@ class TestRunUrlContextRead:
         assert calls[0]["contents"].endswith("URL: https://x.example.gov/report")
         assert "verbatim quotes" in calls[0]["contents"]
 
+    def test_vertex_express_mode_is_passed_to_the_google_client(self, monkeypatch):
+        client_options: list[dict[str, Any]] = []
+
+        def _fake_client(**kwargs: Any) -> Any:
+            client_options.append(kwargs)
+            return SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_kwargs: _Response(text="")))
+
+        monkeypatch.setattr("google.genai.Client", _fake_client)
+        run_url_context_read(
+            "https://x.example.gov/report",
+            "what does it say?",
+            api_key="vertex-key",
+            vertexai=True,
+            role="resolution_source",
+            model="gemini-test",
+            thinking_level="low",
+            timeout_ms=10_000,
+            attempts=1,
+        )
+
+        assert client_options[0]["api_key"] == "vertex-key"
+        assert client_options[0]["vertexai"] is True
+
     def test_a_response_with_no_text_part_reads_as_an_empty_answer(self, monkeypatch):
         """The SDK's `.text` is None when no candidate carries a text part. Both callers withhold
         on an empty answer, so this must come back as "" and not as a crash or a fabricated

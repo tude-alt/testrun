@@ -22,7 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from metaculus_bot.research.gemini_client_config import build_gemini_http_options, gemini_thinking_config
+from metaculus_bot.research.gemini_client_config import (
+    build_gemini_http_options,
+    gemini_thinking_config,
+)
 from metaculus_bot.research.gemini_usage import log_gemini_usage
 from metaculus_bot.research.url_context_telemetry import extract_url_context_telemetry
 
@@ -60,6 +63,7 @@ def run_url_context_read(
     ask: str,
     *,
     api_key: str,
+    vertexai: bool = False,
     role: str,
     model: str,
     thinking_level: str,
@@ -83,10 +87,13 @@ def run_url_context_read(
     from google import genai  # noqa: PLC0415  # HARNESS-SCAN-EXEMPT-function-level-import
     from google.genai import types as genai_types  # noqa: PLC0415  # HARNESS-SCAN-EXEMPT-function-level-import
 
-    client = genai.Client(
-        api_key=api_key,
-        http_options=build_gemini_http_options(timeout_ms=timeout_ms, attempts=attempts),
-    )
+    client_kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "http_options": build_gemini_http_options(timeout_ms=timeout_ms, attempts=attempts),
+    }
+    if vertexai:
+        client_kwargs["vertexai"] = True
+    client = genai.Client(**client_kwargs)
     tools: list[Any] = [{"url_context": {}}]
     config = genai_types.GenerateContentConfig(
         tools=tools,

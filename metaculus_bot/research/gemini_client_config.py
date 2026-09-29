@@ -18,7 +18,11 @@ sized against a different outer deadline (see the arithmetic in ``constants.py``
 
 from __future__ import annotations
 
+import os
+
 from google.genai import types as genai_types
+
+from metaculus_bot.constants import GCP_API_KEY_1_ENV, GOOGLE_API_KEY_ENV
 
 # The transient classes worth a second request: rate limiting plus the 5xx family the
 # Gemini endpoint returns when a backend is briefly unavailable. No other 4xx belongs
@@ -34,6 +38,21 @@ GEMINI_RETRY_MAX_DELAY_S: float = 8.0
 # ``min(initial * 2**retry + U(0, 1), max)`` and its worst case adds the full 1.0.
 _RETRY_JITTER_WORST_CASE_S: float = 1.0
 _RETRY_EXP_BASE: float = 2.0
+
+
+def google_genai_credentials() -> tuple[str, bool] | None:
+    """Return ``(api_key, use_vertex_ai)`` for Vertex Express or AI Studio.
+
+    The Vertex Express key takes precedence when present. ``GOOGLE_API_KEY`` remains
+    the backwards-compatible AI Studio path for local setups and older workflows.
+    """
+    vertex_key = os.getenv(GCP_API_KEY_1_ENV)
+    if vertex_key:
+        return vertex_key, True
+    ai_studio_key = os.getenv(GOOGLE_API_KEY_ENV)
+    if ai_studio_key:
+        return ai_studio_key, False
+    return None
 
 
 def gemini_retry_sleep_allowance_s(attempts: int) -> float:

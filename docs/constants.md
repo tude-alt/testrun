@@ -1060,17 +1060,18 @@ it was served instead, which is the question the smoke run could not answer for 
 hundred characters is enough to tell those apart and short enough that the discarded answer cannot flood
 a log or read as evidence.
 
-## Gemini Search Provider (Google AI Studio direct SDK)
+## Gemini Search Provider (Google GenAI direct SDK)
 
 The provider uses the google-genai SDK with the `GoogleSearch` grounding tool for first-party Google
 Search results, which is distinct from OpenRouter's Exa-backed `:online` plugin. It adds a genuinely new
 search index to the ensemble.
 
-### GOOGLE_API_KEY_ENV
+### GCP_API_KEY_1_ENV and GOOGLE_API_KEY_ENV
 
-`GOOGLE_API_KEY` is the operator's personal Google AI Studio key. In CI it is stored as
-`secrets.GEMINI_API_KEY` and surfaced as `GOOGLE_API_KEY` for the google-genai SDK. The grounded-search
-provider always reads this, because Google AI Studio offers no donated or shared-key path.
+Native Google GenAI calls prefer the operator's personal `GCP_API_KEY_1` key and instantiate the SDK
+with `vertexai=True` for Vertex AI Express Mode. When that key is absent, `GOOGLE_API_KEY` is used for
+Google AI Studio; in CI it is stored as `secrets.GEMINI_API_KEY`. Neither route has a donated or
+shared-key path.
 
 ### GEMINI_USE_DONATED_OPENROUTER_KEY_ENV
 

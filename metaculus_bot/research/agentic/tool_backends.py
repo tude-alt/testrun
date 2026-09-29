@@ -28,10 +28,9 @@ from metaculus_bot.constants import (
     GAP_FILL_V2_READER_HTTP_ATTEMPTS,
     GAP_FILL_V2_READER_MODEL,
     GAP_FILL_V2_READER_THINKING_LEVEL,
-    GOOGLE_API_KEY_ENV,
 )
 from metaculus_bot.research import providers as research_providers
-from metaculus_bot.research.gemini_client_config import gemini_retry_sleep_allowance_s
+from metaculus_bot.research.gemini_client_config import gemini_retry_sleep_allowance_s, google_genai_credentials
 from metaculus_bot.research.url_context_reader import run_url_context_read
 
 # Client-side HTTP ceilings sized against the tools' loop budgets so the underlying socket is
@@ -257,13 +256,15 @@ def _run_document_read_sync(url: str, ask: str) -> tuple[str, int, list[str]]:
     document read from a fluent answer out of parametric memory, and ``read_document`` grants
     the highest verification tier the artifact renderer has.
     """
-    api_key = os.getenv(GOOGLE_API_KEY_ENV)
-    if not api_key:
-        raise ValueError(f"Missing Google API key: {GOOGLE_API_KEY_ENV}")
+    credentials = google_genai_credentials()
+    if credentials is None:
+        raise ValueError("Missing Google API key: set GCP_API_KEY_1 or GOOGLE_API_KEY")
+    api_key, vertexai = credentials
     return run_url_context_read(
         url,
         ask,
         api_key=api_key,
+        vertexai=vertexai,
         role="read_document",
         model=GAP_FILL_V2_READER_MODEL,
         thinking_level=GAP_FILL_V2_READER_THINKING_LEVEL,

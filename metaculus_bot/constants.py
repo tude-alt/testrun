@@ -530,7 +530,9 @@ RESOLUTION_SOURCE_WITHHELD_REPLY_LOG_CHARS: int = 300
 # First-party Google Search grounding, a new index beside OpenRouter's Exa-backed one.
 GEMINI_SEARCH_ENABLED_ENV: str = "GEMINI_SEARCH_ENABLED"
 GEMINI_SEARCH_MODEL_ENV: str = "GEMINI_SEARCH_MODEL"
-# Personal AI Studio key with no donated equivalent. Receipt: docs/constants.md "GOOGLE_API_KEY_ENV".
+# Vertex AI Express key; receipt: docs/constants.md "GCP_API_KEY_1_ENV".
+GCP_API_KEY_1_ENV: str = "GCP_API_KEY_1"
+# Personal AI Studio key fallback. Receipt: docs/constants.md "GOOGLE_API_KEY_ENV".
 GOOGLE_API_KEY_ENV: str = "GOOGLE_API_KEY"
 # OpenRouter Gemini routing only. Receipt: docs/constants.md "GEMINI_USE_DONATED_OPENROUTER_KEY_ENV".
 GEMINI_USE_DONATED_OPENROUTER_KEY_ENV: str = "GEMINI_USE_DONATED_OPENROUTER_KEY"

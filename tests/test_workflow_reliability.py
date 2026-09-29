@@ -442,6 +442,14 @@ class TestPaidUrlContextRungIsArmedInEveryBotWorkflow:
             "archive exactly like one with the flag off"
         )
 
+    @pytest.mark.parametrize("rel_path", _BOT_WORKFLOWS)
+    def test_vertex_express_key_is_wired_in_the_bot_step(self, rel_path: str) -> None:
+        env = self._bot_step_env(_workflow(rel_path))
+        assert "secrets.GCP_API_KEY_1" in str(env.get("GCP_API_KEY_1", "")), (
+            f"{rel_path} does not wire GCP_API_KEY_1 on its bot step, so native Google GenAI calls "
+            "cannot use Vertex AI Express Mode"
+        )
+
 
 class TestManticWorkflowSpendsOnlyPersonalKeys:
     """The Mantic workflow must never hold the Metaculus-donated OpenRouter key, and the

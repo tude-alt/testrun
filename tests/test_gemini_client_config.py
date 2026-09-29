@@ -18,6 +18,7 @@ from metaculus_bot.research.gemini_client_config import (
     build_gemini_http_options,
     gemini_retry_sleep_allowance_s,
     gemini_thinking_config,
+    google_genai_credentials,
 )
 
 
@@ -65,6 +66,26 @@ class TestHttpOptionsBuilder:
         assert codes.http_status_codes == list(GEMINI_RETRY_HTTP_STATUS_CODES)
         assert 503 in GEMINI_RETRY_HTTP_STATUS_CODES
         assert not {400, 401, 403, 404} & set(GEMINI_RETRY_HTTP_STATUS_CODES)
+
+
+class TestGoogleGenAiCredentials:
+    def test_vertex_express_key_takes_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GCP_API_KEY_1", "vertex-key")
+        monkeypatch.setenv("GOOGLE_API_KEY", "ai-studio-key")
+
+        assert google_genai_credentials() == ("vertex-key", True)
+
+    def test_ai_studio_key_remains_the_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GCP_API_KEY_1", raising=False)
+        monkeypatch.setenv("GOOGLE_API_KEY", "ai-studio-key")
+
+        assert google_genai_credentials() == ("ai-studio-key", False)
+
+    def test_no_google_key_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GCP_API_KEY_1", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+        assert google_genai_credentials() is None
 
 
 class TestSleepAllowance:

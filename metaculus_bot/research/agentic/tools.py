@@ -39,7 +39,6 @@ from metaculus_bot.constants import (
     ASKNEWS_SECRET_ENV,
     DOCUMENT_DIGEST_TOP_K,
     EXA_API_KEY_ENV,
-    GOOGLE_API_KEY_ENV,
     RESOLUTION_SOURCE_URL_CONTEXT_MAX_ATTEMPTS,
 )
 from metaculus_bot.research import document_cache, document_text, fetch_markers, source_presentation
@@ -82,6 +81,7 @@ from metaculus_bot.research.fetch_ladder.policy import (
     LADDER_CALLER_GAP_FILL_V2,
     LadderPolicy,
 )
+from metaculus_bot.research.gemini_client_config import google_genai_credentials
 from metaculus_bot.research.http_fetch import pdf_parse_semaphore
 from metaculus_bot.research.image_leads import render_image_leads
 from metaculus_bot.research.resolution_fetch_result import FetchResult
@@ -825,8 +825,8 @@ async def read_document(
     )
     if settled is not None:
         return settled
-    if not os.getenv(GOOGLE_API_KEY_ENV):
-        return _format_fetch_error(f"Google API key is not configured; set {GOOGLE_API_KEY_ENV}.", method="document")
+    if google_genai_credentials() is None:
+        return _format_fetch_error("Google API key is not configured; set GCP_API_KEY_1 or GOOGLE_API_KEY.", method="document")
     if await _url_context_robots_skip(url, ctx=ctx):
         # Its own status token, never tiered: nothing was read, and a retry cannot help.
         logger.info(f"AGENTIC_URLCONTEXT_ROBOTS_SKIP: url={url} host={robots_host(url)}")

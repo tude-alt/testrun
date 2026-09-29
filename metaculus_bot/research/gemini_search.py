@@ -30,7 +30,6 @@ from metaculus_bot.constants import (
     GEMINI_SEARCH_MODEL_ENV,
     GEMINI_SEARCH_THINKING_LEVEL,
     GEMINI_SEARCH_TIMEOUT,
-    GOOGLE_API_KEY_ENV,
 )
 from metaculus_bot.prompts import web_research_prompt
 from metaculus_bot.research.bracket_groups import (
@@ -40,7 +39,11 @@ from metaculus_bot.research.bracket_groups import (
     rebuild_group,
 )
 from metaculus_bot.research.gemini_attribution import rewrite_unsupported_attributions
-from metaculus_bot.research.gemini_client_config import build_gemini_http_options, gemini_thinking_config
+from metaculus_bot.research.gemini_client_config import (
+    build_gemini_http_options,
+    gemini_thinking_config,
+    google_genai_credentials,
+)
 from metaculus_bot.research.gemini_usage import log_gemini_usage
 from metaculus_bot.research.provider_diagnostics import record_provider_detail
 from metaculus_bot.research.providers import ResearchCallable
@@ -77,9 +80,9 @@ _RAW_SEARCH_REDIRECT_RE = re.compile(
 )
 
 
-@functools.lru_cache(maxsize=1)
-def _cached_client_for_key(api_key: str) -> genai.Client:
-    """Process-global cached genai.Client keyed on API key.
+@functools.lru_cache(maxsize=2)
+def _cached_client_for_key(api_key: str, vertexai: bool) -> genai.Client:
+    """Process-global cached genai.Client keyed on API key and Vertex/AI Studio mode.
 
     SDK clients are designed to be long-lived; keeping one across a backtest
     lets TLS connections and HTTP/2 multiplexing be reused across the ~thousands
@@ -91,27 +94,30 @@ def _cached_client_for_key(api_key: str) -> genai.Client:
     ``http_options.retry_options``; a bare client stops after one attempt (see
     ``research/gemini_client_config``).
     """
-    return genai.Client(
-        api_key=api_key,
-        http_options=build_gemini_http_options(
+    client_kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "http_options": build_gemini_http_options(
             timeout_ms=GEMINI_SEARCH_HTTP_TIMEOUT_MS, attempts=GEMINI_SEARCH_HTTP_ATTEMPTS
         ),
-    )
+    }
+    if vertexai:
+        client_kwargs["vertexai"] = True
+    return genai.Client(**client_kwargs)
 
 
 def build_gemini_client() -> genai.Client:
     """Return the cached google-genai Client for the operator's personal Gemini key.
 
-    Reads GOOGLE_API_KEY (the operator's personal Google AI Studio key — in CI
-    populated from ``secrets.GEMINI_API_KEY``). There is no Metaculus-donated
-    Gemini key on the google-genai side; the donated path only exists for
-    OpenRouter-routed Gemini models. Raises ValueError if the key is missing
-    so misconfiguration is loud.
+    Prefers GCP_API_KEY_1 in Vertex AI Express Mode; falls back to GOOGLE_API_KEY
+    for Google AI Studio. There is no Metaculus-donated Gemini key on the
+    google-genai side; the donated path only exists for OpenRouter-routed Gemini
+    models. Raises ValueError if neither key is set so misconfiguration is loud.
     """
-    api_key = os.getenv(GOOGLE_API_KEY_ENV)
-    if not api_key:
-        raise ValueError(f"{GOOGLE_API_KEY_ENV} must be set to use the Gemini search provider")
-    return _cached_client_for_key(api_key)
+    credentials = google_genai_credentials()
+    if credentials is None:
+        raise ValueError("GCP_API_KEY_1 or GOOGLE_API_KEY must be set to use the Gemini search provider")
+    api_key, vertexai = credentials
+    return _cached_client_for_key(api_key, vertexai)
 
 
 def _resolve_model(model_slug: str | None) -> str:

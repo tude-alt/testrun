@@ -242,11 +242,12 @@ people up is the two OpenRouter keys.
   donated key hits a credential, credit, or allowed-providers error. The
   fallback wrapper is `FallbackOpenRouterLlm` in
   `metaculus_bot/fallback_openrouter.py`.
-- **`GOOGLE_API_KEY`: personal.** The operator's Google AI Studio key on a
-  billing-enabled project. Powers the Gemini grounded-search provider and gap-
-  fill v2's document reads. There is no donated Google AI Studio path. In CI
-  this is stored as the `GEMINI_API_KEY` secret and surfaced to the workflow as
-  `GOOGLE_API_KEY` so the `google-genai` SDK picks it up.
+- **`GCP_API_KEY_1`: personal.** Vertex AI Express Mode key. Native Google
+  GenAI calls use it with `vertexai=True` when present, powering grounded search
+  and URL-context document reads.
+- **`GOOGLE_API_KEY`: personal fallback.** Google AI Studio key used by those
+  same native Gemini paths when `GCP_API_KEY_1` is unset. CI continues to map
+  this from the `GEMINI_API_KEY` Actions secret.
 
 Gemini has two separate routes, which is the other easy thing to confuse:
 
@@ -276,10 +277,10 @@ Gemini has two separate routes, which is the other easy thing to confuse:
   key), then re-verify with one live call. See
   `metaculus_bot/fallback_openrouter.py:should_route_via_donated_key` and
   `FUTURE.md` "Gemini on the donated OpenRouter key".
-- **Gemini grounded search** (`research/gemini_search.py`) always uses the
-  personal `GOOGLE_API_KEY`. The donated toggle does not touch it, and neither
-  does anything else on the OpenRouter side. What that key costs is its own
-  subsection below.
+- **Native Google GenAI** (`research/gemini_search.py`, `url_context_reader.py`)
+  prefers `GCP_API_KEY_1` in Vertex AI Express Mode and falls back to personal
+  `GOOGLE_API_KEY` for AI Studio. The donated toggle does not affect either
+  route.
 
 Other keys, all personal, no shared variants: `METACULUS_TOKEN`, `MANTIC_TOKEN`
 (the Crucible bot token, read only in `--mode mantic`), `ASKNEWS_CLIENT_ID`
@@ -287,6 +288,10 @@ Other keys, all personal, no shared variants: `METACULUS_TOKEN`, `MANTIC_TOKEN`
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. The two direct provider keys only matter
 if you bypass OpenRouter; most flows route through OpenRouter and don't need
 them.
+
+`NIMBLE_API_KEY` and `YDC_API_KEY` are not currently consumed by any provider in
+this codebase. Adding them as Actions secrets alone does not activate Nimble or
+You.com research.
 
 `SEC_EDGAR_CONTACT_EMAIL` is not a key but a contact address (also personal): the SEC EDGAR
 client puts it in the fair-access User-Agent, and the client declines to dial without it. The
@@ -694,13 +699,13 @@ positive turns CI red without justification. OpenRouter's deprecation 404s consi
 both "deprecated" and "recommends switching to" in the message body, but either one alone matches,
 to stay robust against minor copy changes.
 
-### Google AI Studio billing and the grounded-search allowance
+### Google GenAI billing and the grounded-search allowance
 
-`GOOGLE_API_KEY` is the operator's personal Google AI Studio key on a
-BILLING-ENABLED (paid-tier, prepaid-credit) project, and marginal cost at current
-usage is near zero. In CI it is stored as `secrets.GEMINI_API_KEY` and surfaced to
-the workflow env as `GOOGLE_API_KEY` so the `google-genai` SDK picks it up. There
-is NO Metaculus-donated Google AI Studio key.
+Native Google GenAI calls prefer `GCP_API_KEY_1` in Vertex AI Express Mode;
+`GOOGLE_API_KEY` is the personal Google AI Studio fallback, supplied in CI from
+`secrets.GEMINI_API_KEY`. Neither has a Metaculus-donated key path. The billing
+details below describe the Google AI Studio route only; Vertex pricing and quota
+must be checked for the project that issued `GCP_API_KEY_1`.
 
 Billing mechanics, verified against the ai.google.dev pricing / billing /
 google-search docs on 2026-07-17 (don't re-litigate without fetching them again):
@@ -1926,7 +1931,7 @@ How the number is produced, because it decides how to read it:
   call site stamped one, which today is the v2 driver alone; it reads, never gates.
   Field detail: `docs/telemetry_markers.md` "PROMPT_SIZE_ALERT".
 - Not on OpenRouter, so never in this ledger: Gemini grounded search and gap-fill
-  v2's `read_document` (google-genai on the personal Google AI Studio key), the
+  v2's `read_document` (google-genai on the personal Vertex Express or AI Studio key), the
   AskNews subscription, Exa. The ledger is therefore an OpenRouter-only figure;
   the all-in $2.07 to $2.21 a question below adds those from their own consoles.
 - The lines are logged from the same `finally` as `CREDIT_SPEND`, after the

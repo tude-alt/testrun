@@ -107,10 +107,21 @@ def _fixture_second_response() -> str:
 
 
 def test_builder_raises_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GCP_API_KEY_1", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-    with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+    with pytest.raises(ValueError, match="GCP_API_KEY_1 or GOOGLE_API_KEY"):
         gemini_search.build_gemini_client()
+
+
+def test_builder_uses_vertex_express_mode_for_gcp_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GCP_API_KEY_1", "vertex-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with patch("metaculus_bot.research.gemini_search.genai.Client") as client_factory:
+        gemini_search.build_gemini_client()
+
+    assert client_factory.call_args.kwargs["api_key"] == "vertex-key"
+    assert client_factory.call_args.kwargs["vertexai"] is True
 
 
 @pytest.mark.asyncio

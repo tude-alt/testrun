@@ -1755,12 +1755,30 @@ async def test_read_document_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_no_local_document")
 async def test_read_document_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GCP_API_KEY_1", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     outcome = await agentic_tools.read_document("https://example.com/file.pdf", "What does it say?")
 
     assert outcome.status == "error"
-    assert "GOOGLE_API_KEY" in outcome.content_markdown
+    assert "GCP_API_KEY_1 or GOOGLE_API_KEY" in outcome.content_markdown
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_local_document")
+async def test_read_document_accepts_vertex_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GCP_API_KEY_1", "vertex-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setattr("asyncio.to_thread", AsyncMock(side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)))
+    monkeypatch.setattr(
+        agentic_tools,
+        "_run_document_read_sync",
+        MagicMock(return_value=("Quoted answer with dates.", 1, ["URL_RETRIEVAL_STATUS_SUCCESS"])),
+    )
+
+    outcome = await agentic_tools.read_document("https://example.com/file.pdf", "What does it say?")
+
+    assert outcome.status == "ok"
 
 
 class TestReadDocumentRefusesQuestionPlatformPages:
