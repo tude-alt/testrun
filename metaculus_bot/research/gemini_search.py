@@ -82,7 +82,7 @@ _RAW_SEARCH_REDIRECT_RE = re.compile(
 
 @functools.lru_cache(maxsize=2)
 def _cached_client_for_key(api_key: str, vertexai: bool) -> genai.Client:
-    """Process-global cached genai.Client keyed on API key and Vertex/AI Studio mode.
+    """Process-global cached Vertex genai.Client keyed on the Vertex Express key.
 
     SDK clients are designed to be long-lived; keeping one across a backtest
     lets TLS connections and HTTP/2 multiplexing be reused across the ~thousands
@@ -94,28 +94,26 @@ def _cached_client_for_key(api_key: str, vertexai: bool) -> genai.Client:
     ``http_options.retry_options``; a bare client stops after one attempt (see
     ``research/gemini_client_config``).
     """
+    if not vertexai:
+        raise ValueError("Native Gemini clients require Vertex AI; AI Studio is not an eligible route")
     client_kwargs: dict[str, Any] = {
         "api_key": api_key,
+        "vertexai": True,
         "http_options": build_gemini_http_options(
             timeout_ms=GEMINI_SEARCH_HTTP_TIMEOUT_MS, attempts=GEMINI_SEARCH_HTTP_ATTEMPTS
         ),
     }
-    if vertexai:
-        client_kwargs["vertexai"] = True
     return genai.Client(**client_kwargs)
 
 
 def build_gemini_client() -> genai.Client:
-    """Return the cached google-genai Client for the operator's personal Gemini key.
+    """Return the cached Vertex AI Express client for the configured GCP key.
 
-    Prefers GCP_API_KEY_1 in Vertex AI Express Mode; falls back to GOOGLE_API_KEY
-    for Google AI Studio. There is no Metaculus-donated Gemini key on the
-    google-genai side; the donated path only exists for OpenRouter-routed Gemini
-    models. Raises ValueError if neither key is set so misconfiguration is loud.
+    No AI Studio, Developer API, or donated-key route is eligible here.
     """
     credentials = google_genai_credentials()
     if credentials is None:
-        raise ValueError("GCP_API_KEY_1 or GOOGLE_API_KEY must be set to use the Gemini search provider")
+        raise ValueError("GCP_API_KEY_1 must be set to use the Vertex Gemini search provider")
     api_key, vertexai = credentials
     return _cached_client_for_key(api_key, vertexai)
 

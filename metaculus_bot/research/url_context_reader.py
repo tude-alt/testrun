@@ -87,12 +87,13 @@ def run_url_context_read(
     from google import genai  # noqa: PLC0415  # HARNESS-SCAN-EXEMPT-function-level-import
     from google.genai import types as genai_types  # noqa: PLC0415  # HARNESS-SCAN-EXEMPT-function-level-import
 
+    if not vertexai:
+        raise ValueError("Gemini url_context requires Vertex AI; AI Studio is not an eligible route")
     client_kwargs: dict[str, Any] = {
         "api_key": api_key,
+        "vertexai": True,
         "http_options": build_gemini_http_options(timeout_ms=timeout_ms, attempts=attempts),
     }
-    if vertexai:
-        client_kwargs["vertexai"] = True
     client = genai.Client(**client_kwargs)
     tools: list[Any] = [{"url_context": {}}]
     config = genai_types.GenerateContentConfig(

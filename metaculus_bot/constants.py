@@ -206,6 +206,8 @@ ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"  # noqa: S105  # env var NAME, not a credential
 EXA_API_KEY_ENV: str = "EXA_API_KEY"
 PERPLEXITY_API_KEY_ENV: str = "PERPLEXITY_API_KEY"
+NIMBLE_API_KEY_ENV: str = "NIMBLE_API_KEY"
+YDC_API_KEY_ENV: str = "YDC_API_KEY"
 METACULUS_TOKEN_ENV: str = "METACULUS_TOKEN"  # noqa: S105  # env var NAME, not a credential
 MANTIC_TOKEN_ENV: str = "MANTIC_TOKEN"  # noqa: S105  # env var NAME, not a credential; personal, never donated
 # Master switch; a Mantic run sets it false and fails shut. Receipt: docs/constants.md "donated_openrouter_key_enabled".
@@ -385,14 +387,18 @@ NATIVE_SEARCH_VERBOSITY_DEFAULT: str = "low"
 NATIVE_SEARCH_MAX_RESULTS: int = 20  # web options passed to the OpenRouter plugins
 NATIVE_SEARCH_CONTEXT_SIZE: str = "high"  # "low", "medium", "high"
 
-# --- Perplexity (fallback research provider; dormant while AskNews wins the ladder) ---
+# --- Direct Perplexity and web-search fallback providers ---
 
-# One constant; the two call sites drifted apart. Receipt: docs/constants.md "PERPLEXITY_RESEARCH_MODEL".
-PERPLEXITY_RESEARCH_MODEL: str = "perplexity/sonar-reasoning-pro"
-PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER: str = f"openrouter/{PERPLEXITY_RESEARCH_MODEL}"
-
-# Both call sites had NO wall bound at all. Receipt: docs/constants.md "PERPLEXITY_WALL_TIMEOUT".
-PERPLEXITY_WALL_TIMEOUT: float = 300.0
+PERPLEXITY_RESEARCH_MODEL: str = "perplexity/sonar"
+PERPLEXITY_AGENT_API_URL: str = "https://api.perplexity.ai/v1/agent"
+NIMBLE_SEARCH_API_URL: str = "https://sdk.nimbleway.com/v2/search"
+YOU_SEARCH_API_URL: str = "https://ydc-index.io/v1/search"
+WEB_SEARCH_CHAIN_WALL_TIMEOUT: float = 180.0
+WEB_SEARCH_REQUEST_TIMEOUT: float = 35.0
+WEB_SEARCH_RETRY_MAX_ATTEMPTS: int = 2
+# Transitional import aliases removed with the old Perplexity provider implementation.
+PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER: str = ""
+PERPLEXITY_WALL_TIMEOUT: float = WEB_SEARCH_CHAIN_WALL_TIMEOUT
 
 # --- Resolution-Source Fetcher (Tier 1) ---
 
@@ -525,19 +531,21 @@ RESOLUTION_SOURCE_URL_CONTEXT_MAX_ATTEMPTS: int = 2
 # Tells not_addressed from a challenge page. Receipt: docs/constants.md "RESOLUTION_SOURCE_WITHHELD_REPLY_LOG_CHARS".
 RESOLUTION_SOURCE_WITHHELD_REPLY_LOG_CHARS: int = 300
 
-# --- Gemini Search Provider (Google AI Studio direct SDK) ---
+# --- Vertex Gemini Search Provider ---
 
 # First-party Google Search grounding, a new index beside OpenRouter's Exa-backed one.
 GEMINI_SEARCH_ENABLED_ENV: str = "GEMINI_SEARCH_ENABLED"
 GEMINI_SEARCH_MODEL_ENV: str = "GEMINI_SEARCH_MODEL"
 # Vertex AI Express key; receipt: docs/constants.md "GCP_API_KEY_1_ENV".
 GCP_API_KEY_1_ENV: str = "GCP_API_KEY_1"
-# Personal AI Studio key fallback. Receipt: docs/constants.md "GOOGLE_API_KEY_ENV".
-GOOGLE_API_KEY_ENV: str = "GOOGLE_API_KEY"
-# OpenRouter Gemini routing only. Receipt: docs/constants.md "GEMINI_USE_DONATED_OPENROUTER_KEY_ENV".
-GEMINI_USE_DONATED_OPENROUTER_KEY_ENV: str = "GEMINI_USE_DONATED_OPENROUTER_KEY"
-# Verified live on the native SDK 2026-09-03. Receipt: docs/constants.md "GEMINI_SEARCH_DEFAULT_MODEL".
-GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.8-flash"
+# Separate, independently configurable model ids for the Vertex primary and the
+# OpenRouter/google-vertex fallback. Defaults preserve the current ensemble member.
+GEMINI_VERTEX_MODEL_ENV: str = "GEMINI_VERTEX_MODEL"
+GEMINI_OPENROUTER_MODEL_ENV: str = "GEMINI_OPENROUTER_MODEL"
+GEMINI_VERTEX_MODEL: str = "gemini-3.1-pro-preview"
+GEMINI_OPENROUTER_MODEL: str = "google/gemini-3.1-pro-preview"
+# Available in Vertex Express Mode and supported by Vertex Google Search grounding (2026-09-29 docs check).
+GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.1-pro-preview"
 # 6 min: a 10-round AFC chain takes 150-200 s. Receipt: docs/constants.md "GEMINI_SEARCH_TIMEOUT".
 GEMINI_SEARCH_TIMEOUT: int = 360
 # Per-call wall for resolving all cited search links; use the remaining search wall. Receipt: docs/constants.md "GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S".

@@ -93,6 +93,12 @@ jobs:
           # SmartSearcher fallback path). Secret name is lowercase exa_key
           # (funded 2026-07-16).
           EXA_API_KEY: ${{ secrets.exa_key }}
+          NIMBLE_API_KEY: ${{ secrets.NIMBLE_API_KEY }}
+          YDC_API_KEY: ${{ secrets.YDC_API_KEY }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OAI_ANTH_OPENROUTER_KEY: ${{ secrets.OAI_ANTH_OPENROUTER_KEY }}
@@ -112,20 +118,12 @@ jobs:
           NATIVE_SEARCH_ENABLED: 'true'
           FINANCIAL_DATA_ENABLED: 'true'
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-          # Native Google GenAI prefers Vertex AI Express Mode via GCP_API_KEY_1;
-          # GOOGLE_API_KEY remains the Google AI Studio fallback.
-          GCP_API_KEY_1: ${{ secrets.GCP_API_KEY_1 }}
-          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Vertex AI Express Mode. The secret name is lowercase as configured in Actions.
+          GCP_API_KEY_1: ${{ secrets.gcp_api_key_1 }}
+          GEMINI_VERTEX_MODEL: gemini-3.1-pro-preview
+          GEMINI_OPENROUTER_MODEL: google/gemini-3.1-pro-preview
+          GEMINI_SEARCH_MODEL: gemini-3.1-pro-preview
           GEMINI_SEARCH_ENABLED: 'true'
-          # OpenRouter Gemini routing (forecaster, stacker, summarizer when the
-          # ensemble includes a Google model). When 'true' (default since
-          # 2026-06-16), Gemini OpenRouter calls prefer the Metaculus-donated
-          # OAI_ANTH_OPENROUTER_KEY wrapper with personal-key fallback. On because
-          # Metaculus raised the Google rate limits — the donated key serves most
-          # Gemini now; gemini-3.1-pro-preview is pinned to the personal key
-          # (DONATED_KEY_BLOCKED_GOOGLE_MODELS blocklist; no donated attempt, no
-          # 429) pending the Metaculus BYOK fix.
-          GEMINI_USE_DONATED_OPENROUTER_KEY: 'true'
           # Second-pass gap-fill: analyzer identifies gaps in first-pass research,
           # parallel grounded Gemini searches resolve each. Fails soft.
           GAP_FILL_ENABLED: 'true'
