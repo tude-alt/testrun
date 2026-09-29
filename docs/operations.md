@@ -289,9 +289,14 @@ Other keys, all personal, no shared variants: `METACULUS_TOKEN`, `MANTIC_TOKEN`
 if you bypass OpenRouter; most flows route through OpenRouter and don't need
 them.
 
-`NIMBLE_API_KEY` and `YDC_API_KEY` are not currently consumed by any provider in
-this codebase. Adding them as Actions secrets alone does not activate Nimble or
-You.com research.
+`NIMBLE_API_KEY` and `YDC_API_KEY` are currently configuration-only: the bot has
+no Nimble or You.com research provider, so adding these Actions secrets does not
+activate either source. `AZURE_OPENAI_API_KEY` is also configuration-only; using
+Azure OpenAI additionally requires `AZURE_OPENAI_ENDPOINT`,
+`AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_VERSION`, and the current
+model roster does not route calls to Azure. These credentials are passed into
+bot workflow environments so a later provider/model integration can use them;
+they do not change current provider selection or spending.
 
 `SEC_EDGAR_CONTACT_EMAIL` is not a key but a contact address (also personal): the SEC EDGAR
 client puts it in the fair-access User-Agent, and the client declines to dial without it. The

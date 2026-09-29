@@ -13,7 +13,6 @@ from metaculus_bot.constants import (
     OPENROUTER_API_KEY_ENV,
     credit_alerts_active,
     donated_openrouter_key_enabled,
-    gemini_use_donated_openrouter_key,
 )
 from metaculus_bot.credit_telemetry import (
     DONATED_KEY_ALIAS,
@@ -178,6 +177,8 @@ def should_route_via_donated_key(model: str) -> bool:
     """
     if not isinstance(model, str):  # a non-slug routes to the personal key rather than crashing the key decision
         return False
+    if _is_gemini_openrouter_model(model):
+        return False
     if not donated_openrouter_key_enabled():
         return False
     if not model.startswith("openrouter/"):
@@ -188,13 +189,12 @@ def should_route_via_donated_key(model: str) -> bool:
     provider = parts[1]
     if provider not in DONATED_KEY_PROVIDERS:
         return False
-    if provider == "google":
-        if not gemini_use_donated_openrouter_key():
-            return False
-        model_name = "/".join(parts[2:])
-        if any(model_name.startswith(blocked) for blocked in DONATED_KEY_BLOCKED_GOOGLE_MODELS):
-            return False
     return True
+
+
+def _is_gemini_openrouter_model(model: str) -> bool:
+    parts = model.split("/")
+    return len(parts) >= 3 and parts[0] == "openrouter" and parts[1] == "google" and parts[2].startswith("gemini-")
 
 
 # A drained spend cap arrives as 403 with this phrase. See docs/operations.md "What a dry donated key actually returns".
@@ -476,6 +476,11 @@ def build_llm_with_openrouter_fallback(model: str, *, role: str | None = None, *
     ``CREDIT_ROLE_SPEND`` ledger (``credit_telemetry.llm_call_metadata`` lists the roles in
     use). Pass it at every production call site; a missing role books as ``untagged``.
     """
+    if _is_gemini_openrouter_model(model):
+        from metaculus_bot.gemini_routing import build_vertex_first_gemini  # noqa: PLC0415  # late binding avoids a module cycle
+
+        return build_vertex_first_gemini(model, role=role, **kwargs)
+
     if should_route_via_donated_key(model):
         special_key = os.getenv(OAI_ANTH_OPENROUTER_KEY_ENV)
         general_key = os.getenv(OPENROUTER_API_KEY_ENV)

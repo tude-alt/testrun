@@ -826,7 +826,7 @@ async def read_document(
     if settled is not None:
         return settled
     if google_genai_credentials() is None:
-        return _format_fetch_error("Google API key is not configured; set GCP_API_KEY_1 or GOOGLE_API_KEY.", method="document")
+        return _format_fetch_error("Vertex AI key is not configured; set GCP_API_KEY_1.", method="document")
     if await _url_context_robots_skip(url, ctx=ctx):
         # Its own status token, never tiered: nothing was read, and a retry cannot help.
         logger.info(f"AGENTIC_URLCONTEXT_ROBOTS_SKIP: url={url} host={robots_host(url)}")

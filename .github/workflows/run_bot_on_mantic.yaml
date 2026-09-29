@@ -129,6 +129,12 @@ jobs:
           # SmartSearcher fallback path). Secret name is lowercase exa_key
           # (funded 2026-07-16).
           EXA_API_KEY: ${{ secrets.exa_key }}
+          NIMBLE_API_KEY: ${{ secrets.NIMBLE_API_KEY }}
+          YDC_API_KEY: ${{ secrets.YDC_API_KEY }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # The ONE OpenRouter key here: the operator's personal key. The
           # Metaculus-donated key is deliberately not wired (see the header comment),
@@ -155,17 +161,12 @@ jobs:
           # SEC EDGAR fair-access contact: the User-Agent the EDGAR client sends. Unset, the
           # client declines and the fetch ladder falls through to the ordinary page fetch.
           SEC_EDGAR_CONTACT_EMAIL: ${{ secrets.SEC_EDGAR_CONTACT_EMAIL }}
-          # Native Google GenAI prefers Vertex AI Express Mode via GCP_API_KEY_1;
-          # GOOGLE_API_KEY remains the Google AI Studio fallback.
-          GCP_API_KEY_1: ${{ secrets.GCP_API_KEY_1 }}
-          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Vertex AI Express Mode. The secret name is lowercase as configured in Actions.
+          GCP_API_KEY_1: ${{ secrets.gcp_api_key_1 }}
+          GEMINI_VERTEX_MODEL: gemini-3.1-pro-preview
+          GEMINI_OPENROUTER_MODEL: google/gemini-3.1-pro-preview
+          GEMINI_SEARCH_MODEL: gemini-3.1-pro-preview
           GEMINI_SEARCH_ENABLED: 'true'
-          # OpenRouter Gemini routing (forecaster, stacker, summarizer when the
-          # ensemble includes a Google model). The Metaculus workflows set this
-          # 'true' so Gemini prefers the donated key; here it is 'false' so every
-          # Gemini call goes straight to the personal OPENROUTER_API_KEY. Redundant
-          # with the master switch above, kept explicit so the file reads as what it is.
-          GEMINI_USE_DONATED_OPENROUTER_KEY: 'false'
           # Second-pass gap-fill: analyzer identifies gaps in first-pass research,
           # parallel grounded Gemini searches resolve each. Fails soft.
           GAP_FILL_ENABLED: 'true'

@@ -450,6 +450,23 @@ class TestPaidUrlContextRungIsArmedInEveryBotWorkflow:
             "cannot use Vertex AI Express Mode"
         )
 
+    @pytest.mark.parametrize("rel_path", _BOT_WORKFLOWS)
+    def test_requested_provider_credentials_are_wired(self, rel_path: str) -> None:
+        env = self._bot_step_env(_workflow(rel_path))
+        expected_secrets = {
+            "FRED_API_KEY": "FRED_API_KEY",
+            "NIMBLE_API_KEY": "NIMBLE_API_KEY",
+            "YDC_API_KEY": "YDC_API_KEY",
+            "AZURE_OPENAI_API_KEY": "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT": "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_DEPLOYMENT_NAME": "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "AZURE_OPENAI_API_VERSION": "AZURE_OPENAI_API_VERSION",
+        }
+        for env_name, secret_name in expected_secrets.items():
+            assert f"secrets.{secret_name}" in str(env.get(env_name, "")), (
+                f"{rel_path} does not wire {env_name} from Actions secrets into the main.py step"
+            )
+
 
 class TestManticWorkflowSpendsOnlyPersonalKeys:
     """The Mantic workflow must never hold the Metaculus-donated OpenRouter key, and the
