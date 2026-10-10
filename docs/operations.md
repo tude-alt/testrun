@@ -228,6 +228,18 @@ The bot needs several credentials. `.env.template` lists them with inline
 notes; copy it and fill in real values. The one piece of routing that trips
 people up is the two OpenRouter keys.
 
+The six production forecasters are `nova-micro`, `nova-lite`, `nova-pro`,
+`nova-2-lite`, `claude-sonnet-4.6`, and `claude-opus-4.6`. Each first uses the
+OpenAI-compatible LiteLLM gateway at `https://litellm.vision.aivar.app/v1`,
+authenticated by `LITELLM_API_KEY`. If that key is absent or a gateway request
+fails, the same logical member makes one request to its mapped OpenRouter model
+using `OPENROUTER_API_KEY`; fallback never adds an ensemble vote. The mappings
+live in `metaculus_bot/llm_configs.py`. Bot and test workflows map the
+repository Actions secret `LITELLM_API_KEY` into the process. Locally,
+`load_environment()` loads `.env`/`.env.local`; `.gitignore` excludes those
+files, and `.env.template` contains only an empty placeholder. Gateway costs
+remain unknown when its OpenAI-compatible response has no recognized cost data.
+
 - **`OAI_ANTH_OPENROUTER_KEY`: donated / shared.** Metaculus provides credits
   on this key for OpenAI, Anthropic, and Google models routed via OpenRouter.
   Its server-side allowed-providers list is locked to those three, so anything
@@ -238,9 +250,9 @@ people up is the two OpenRouter keys.
   and fails shut otherwise, because the key was donated for Metaculus tournaments
   (see "Mantic" below).
 - **`OPENROUTER_API_KEY`: personal.** Pays for what the donated key can't
-  (Grok, Qwen, Perplexity-via-OpenRouter) and serves as the fallback when the
-  donated key hits a credential, credit, or allowed-providers error. The
-  fallback wrapper is `FallbackOpenRouterLlm` in
+  (Grok, Qwen, and other personal OpenRouter calls), serves as the gateway
+  forecasters' fallback, and handles fallback when the donated key hits a
+  credential, credit, or allowed-providers error. The wrappers are in
   `metaculus_bot/fallback_openrouter.py`.
 - **`GCP_API_KEY_1`: personal.** Vertex AI Express Mode key. Native Google
   GenAI calls use it with `vertexai=True` when present, powering grounded search

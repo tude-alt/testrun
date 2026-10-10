@@ -61,6 +61,7 @@ _MODEL_ID_PATTERN = re.compile(
       | nemotron-[0-9]
       | llama-[0-9]
       | mistral-[a-z0-9]
+    | nova-[a-z0-9-]+
       | command-r
     )
     """,

@@ -365,6 +365,7 @@ QUESTION_METADATA_KEY: str = "question"
 DONATED_KEY_ALIAS: str = "donated"
 PERSONAL_KEY_ALIAS: str = "personal"
 DIRECT_KEY_ALIAS: str = "direct"
+LITELLM_GATEWAY_KEY_ALIAS: str = "litellm_gateway"
 UNKNOWN_KEY_ALIAS: str = "unknown"
 
 # A completion nobody tagged, kept visible on purpose rather than folded into another row.

@@ -9,6 +9,8 @@ from forecasting_tools import GeneralLlm
 
 from metaculus_bot.constants import (
     CREDIT_ALERT_RESUME_DATE,
+    LITELLM_API_BASE_URL,
+    LITELLM_API_KEY_ENV,
     OAI_ANTH_OPENROUTER_KEY_ENV,
     OPENROUTER_API_KEY_ENV,
     credit_alerts_active,
@@ -17,6 +19,7 @@ from metaculus_bot.constants import (
 from metaculus_bot.credit_telemetry import (
     DONATED_KEY_ALIAS,
     DONATED_KEY_PROBE_TIMEOUT_S,
+    LITELLM_GATEWAY_KEY_ALIAS,
     PERSONAL_KEY_ALIAS,
     DonatedKeyState,
     classify_donated_key_state,
@@ -26,6 +29,20 @@ from metaculus_bot.credit_telemetry import (
 from metaculus_bot.llm_retry import llm_status_code
 
 logger: logging.Logger = logging.getLogger(__name__)
+_LITELLM_GATEWAY_PERMANENT_FAILURES: set[str] = set()
+
+
+def _classify_litellm_gateway_failure(exc: Exception) -> tuple[str, bool]:
+    status = llm_status_code(exc)
+    if status in (401, 403):
+        return "gateway_auth_or_permission", True
+    if status == 404:
+        return "gateway_model_unavailable", True
+    if status == 429:
+        return "gateway_rate_limited", False
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "gateway_timeout", False
+    return "gateway_upstream_error", False
 
 
 # Where provider error text ends and our echoed prompt begins. See docs/operations.md "Prompt-echo truncation".
@@ -187,9 +204,7 @@ def should_route_via_donated_key(model: str) -> bool:
     if len(parts) < 2:
         return False
     provider = parts[1]
-    if provider not in DONATED_KEY_PROVIDERS:
-        return False
-    return True
+    return provider in DONATED_KEY_PROVIDERS
 
 
 def _is_gemini_openrouter_model(model: str) -> bool:
@@ -466,6 +481,147 @@ class FallbackOpenRouterLlm(GeneralLlm):
         return await self._secondary_llm.invoke(prompt, system_prompt)
 
 
+class LiteLlmGatewayFallback(GeneralLlm):
+    """One logical roster member: Aivar LiteLLM gateway first, personal OpenRouter on failure."""
+
+    def __init__(
+        self,
+        *,
+        gateway_model: str,
+        openrouter_model: str,
+        role: str,
+        **kwargs: Any,
+    ) -> None:
+        gateway_key = os.getenv(LITELLM_API_KEY_ENV)
+        self._gateway_requested_model = gateway_model
+        self._openrouter_requested_model = openrouter_model
+        self._role = role
+        super().__init__(
+            model=f"openai/{gateway_model}",
+            api_key=gateway_key,
+            base_url=LITELLM_API_BASE_URL,
+            metadata=llm_call_metadata(role, LITELLM_GATEWAY_KEY_ALIAS),
+            **kwargs,
+        )
+        openrouter_key = os.getenv(OPENROUTER_API_KEY_ENV)
+        self._openrouter_llm = (
+            GeneralLlm(
+                model=f"openrouter/{openrouter_model}",
+                api_key=openrouter_key,
+                metadata=llm_call_metadata(role, PERSONAL_KEY_ALIAS),
+                **kwargs,
+            )
+            if openrouter_key
+            else None
+        )
+
+    async def invoke(self, prompt: Any, system_prompt: str | None = None) -> str:  # type: ignore[override]
+        started = asyncio.get_running_loop().time()
+        timeout_s = float(self.litellm_kwargs.get("timeout") or 480.0)
+        deadline = started + timeout_s
+        gateway_key = os.getenv(LITELLM_API_KEY_ENV)
+        if gateway_key:
+            self.litellm_kwargs["api_key"] = gateway_key
+        if "*" in _LITELLM_GATEWAY_PERMANENT_FAILURES or self._gateway_requested_model in _LITELLM_GATEWAY_PERMANENT_FAILURES:
+            reason = "gateway_route_disabled_after_permanent_failure"
+        elif not gateway_key:
+            reason = "missing_litellm_api_key"
+        else:
+            try:
+                answer = await asyncio.wait_for(super().invoke(prompt, system_prompt), timeout=timeout_s)
+                logger.info(
+                    "MODEL_ROUTE: role=%s requested_model=%s transport=litellm_gateway "
+                    "configured_provider=aivar_litellm observed_model=unknown fallback_reason=none "
+                    "latency_ms=%d cost_usd=unknown status=ok",
+                    self._role,
+                    self._gateway_requested_model,
+                    round((asyncio.get_running_loop().time() - started) * 1000),
+                )
+                return answer
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001  # gateway availability/auth/model failures use same-member fallback
+                status = llm_status_code(exc)
+                reason, permanent = _classify_litellm_gateway_failure(exc)
+                if permanent:
+                    disabled_route = "*" if status in (401, 403) else self._gateway_requested_model
+                    _LITELLM_GATEWAY_PERMANENT_FAILURES.add(disabled_route)
+                logger.warning(
+                    "MODEL_ROUTE: role=%s requested_model=%s transport=litellm_gateway "
+                    "configured_provider=aivar_litellm observed_model=unknown fallback_reason=%s "
+                    "latency_ms=%d cost_usd=unknown status=failed error_type=%s http_status=%s",
+                    self._role,
+                    self._gateway_requested_model,
+                    reason,
+                    round((asyncio.get_running_loop().time() - started) * 1000),
+                    type(exc).__name__,
+                    llm_status_code(exc) or "unknown",
+                )
+        return await self._invoke_openrouter_fallback(prompt, system_prompt, reason, deadline)
+
+    async def _invoke_openrouter_fallback(
+        self,
+        prompt: Any,
+        system_prompt: str | None,
+        reason: str,
+        deadline: float,
+    ) -> str:
+        if self._openrouter_llm is None:
+            raise RuntimeError(
+                f"Gateway route unavailable ({reason}); OPENROUTER_API_KEY is not configured for fallback"
+            ) from None
+        fallback_started = asyncio.get_running_loop().time()
+        remaining_s = deadline - fallback_started
+        if remaining_s <= 0:
+            raise RuntimeError(f"Gateway route unavailable ({reason}); shared model timeout exhausted") from None
+        try:
+            answer = await asyncio.wait_for(self._openrouter_llm.invoke(prompt, system_prompt), timeout=remaining_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001  # do not leak upstream error text or credentials
+            status = llm_status_code(exc)
+            logger.error(
+                "MODEL_ROUTE: role=%s requested_model=%s transport=openrouter "
+                "configured_provider=openrouter observed_model=unknown fallback_reason=%s "
+                "latency_ms=%d cost_usd=unknown status=failed error_type=%s http_status=%s",
+                self._role,
+                self._openrouter_requested_model,
+                reason,
+                round((asyncio.get_running_loop().time() - fallback_started) * 1000),
+                type(exc).__name__,
+                status or "unknown",
+            )
+            raise RuntimeError(
+                f"Gateway route unavailable ({reason}); OpenRouter fallback failed "
+                f"({type(exc).__name__}, HTTP {status or 'unknown'})"
+            ) from None
+        logger.warning(
+            "MODEL_ROUTE: role=%s requested_model=%s transport=openrouter "
+            "configured_provider=openrouter observed_model=unknown fallback_reason=%s "
+            "latency_ms=%d cost_usd=unknown status=fallback",
+            self._role,
+            self._openrouter_requested_model,
+            reason,
+            round((asyncio.get_running_loop().time() - fallback_started) * 1000),
+        )
+        return answer
+
+
+def build_litellm_gateway_with_openrouter_fallback(
+    *,
+    gateway_model: str,
+    openrouter_model: str,
+    role: str,
+    **kwargs: Any,
+) -> LiteLlmGatewayFallback:
+    return LiteLlmGatewayFallback(
+        gateway_model=gateway_model,
+        openrouter_model=openrouter_model,
+        role=role,
+        **kwargs,
+    )
+
+
 def build_llm_with_openrouter_fallback(model: str, *, role: str | None = None, **kwargs: Any) -> GeneralLlm:
     """
     Construct a GeneralLlm that automatically falls back from the Metaculus-donated OpenRouter
@@ -477,7 +633,9 @@ def build_llm_with_openrouter_fallback(model: str, *, role: str | None = None, *
     use). Pass it at every production call site; a missing role books as ``untagged``.
     """
     if _is_gemini_openrouter_model(model):
-        from metaculus_bot.gemini_routing import build_vertex_first_gemini  # noqa: PLC0415  # late binding avoids a module cycle
+        from metaculus_bot.gemini_routing import (  # noqa: PLC0415  # late binding avoids a module cycle
+            build_vertex_first_gemini,
+        )
 
         return build_vertex_first_gemini(model, role=role, **kwargs)
 

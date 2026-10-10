@@ -202,6 +202,8 @@ TEST_QUESTIONS_OVERRIDE_ENV: str = "TEST_QUESTIONS_OVERRIDE"
 # Named so the literals are not duplicated. Receipt: docs/constants.md "OPENROUTER_API_KEY_ENV".
 OPENROUTER_API_KEY_ENV: str = "OPENROUTER_API_KEY"
 OAI_ANTH_OPENROUTER_KEY_ENV: str = "OAI_ANTH_OPENROUTER_KEY"
+LITELLM_API_KEY_ENV: str = "LITELLM_API_KEY"
+LITELLM_API_BASE_URL: str = "https://litellm.vision.aivar.app/v1"
 ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"  # noqa: S105  # env var NAME, not a credential
 EXA_API_KEY_ENV: str = "EXA_API_KEY"
@@ -544,6 +546,8 @@ GEMINI_VERTEX_MODEL_ENV: str = "GEMINI_VERTEX_MODEL"
 GEMINI_OPENROUTER_MODEL_ENV: str = "GEMINI_OPENROUTER_MODEL"
 GEMINI_VERTEX_MODEL: str = "gemini-3.1-pro-preview"
 GEMINI_OPENROUTER_MODEL: str = "google/gemini-3.1-pro-preview"
+# Retained for callers importing the old toggle; Gemini no longer routes via the donated key.
+GEMINI_USE_DONATED_OPENROUTER_KEY_ENV: str = "GEMINI_USE_DONATED_OPENROUTER_KEY"
 # Available in Vertex Express Mode and supported by Vertex Google Search grounding (2026-09-29 docs check).
 GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.1-pro-preview"
 # 6 min: a 10-round AFC chain takes 150-200 s. Receipt: docs/constants.md "GEMINI_SEARCH_TIMEOUT".
