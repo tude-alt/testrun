@@ -135,10 +135,8 @@ def get_lineup(name: str) -> tuple[list[GeneralLlm], list[str]]:
 #   default) is for. Dropping qwen would put us at 3 free models, which is
 #   below the noise floor for ensemble diversity at 50q scale.
 FREE_FORECASTER_MODELS: list[str] = [
-    "openrouter/minimax/minimax-m2.5:free",
-    "openrouter/google/gemma-4-26b-a4b-it:free",
-    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
     "openrouter/qwen/qwen3-next-80b-a3b-instruct:free",
+    "openrouter/deepseek/deepseek-r1-0528:free",
 ]
 
 # Parser stays on a Google-served free model so the donated-key wrapper
@@ -163,7 +161,7 @@ FREE_FORECASTER_MODELS: list[str] = [
 #     interpolated correctly, within bounds. Minor: emits some adjacent
 #     duplicate values (P40=P50, P80=P90), which the prod numeric_pipeline
 #     handles via apply_jitter_for_duplicates.
-FREE_PARSER_MODEL: str = "openrouter/google/gemma-4-31b-it:free"
+FREE_PARSER_MODEL: str = "openrouter/qwen/qwen3-next-80b-a3b-instruct:free"
 
 
 def build_free_forecaster_llms() -> list[GeneralLlm]:

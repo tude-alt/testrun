@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -53,6 +54,24 @@ MODEL_CATALOG: dict[str, GeneralLlm] = {
     ),
     "deepseek-3.2": GeneralLlm(
         model="openrouter/deepseek/deepseek-v3.2",
+        **MODEL_CONFIG,
+    ),
+    "akashml-gpt-4.1-mini": GeneralLlm(
+        model="akashml/openai/gpt-4.1-mini",
+        api_key=os.getenv("AKASHML_API_KEY"),
+        base_url=os.getenv("AKASHML_API_BASE_URL", "https://api.akashml.com/v1"),
+        **MODEL_CONFIG,
+    ),
+    "akashml-gpt-4.1-nano": GeneralLlm(
+        model="akashml/openai/gpt-4.1-nano",
+        api_key=os.getenv("AKASHML_API_KEY"),
+        base_url=os.getenv("AKASHML_API_BASE_URL", "https://api.akashml.com/v1"),
+        **MODEL_CONFIG,
+    ),
+    "akashml-gpt-oss-20b": GeneralLlm(
+        model="akashml/openai/gpt-oss-20b",
+        api_key=os.getenv("AKASHML_API_KEY"),
+        base_url=os.getenv("AKASHML_API_BASE_URL", "https://api.akashml.com/v1"),
         **MODEL_CONFIG,
     ),
     # "kimi-k2": GeneralLlm(
@@ -107,6 +126,9 @@ MODEL_CATALOG: dict[str, GeneralLlm] = {
 INDIVIDUAL_MODEL_SPECS: tuple[Mapping[str, str | GeneralLlm], ...] = (
     MappingProxyType({"name": "qwen3-235b", "forecaster": MODEL_CATALOG["qwen3-235b"]}),
     MappingProxyType({"name": "deepseek-3.2", "forecaster": MODEL_CATALOG["deepseek-3.2"]}),
+    MappingProxyType({"name": "akashml-gpt-4.1-mini", "forecaster": MODEL_CATALOG["akashml-gpt-4.1-mini"]}),
+    MappingProxyType({"name": "akashml-gpt-4.1-nano", "forecaster": MODEL_CATALOG["akashml-gpt-4.1-nano"]}),
+    MappingProxyType({"name": "akashml-gpt-oss-20b", "forecaster": MODEL_CATALOG["akashml-gpt-oss-20b"]}),
     MappingProxyType({"name": "gpt-5.1", "forecaster": MODEL_CATALOG["gpt-5.1"]}),
     # MappingProxyType({"name": "o3", "forecaster": MODEL_CATALOG["o3"]}),
     # --- Models below are for future testing ---

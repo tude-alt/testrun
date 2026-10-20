@@ -202,6 +202,8 @@ TEST_QUESTIONS_OVERRIDE_ENV: str = "TEST_QUESTIONS_OVERRIDE"
 # Named so the literals are not duplicated. Receipt: docs/constants.md "OPENROUTER_API_KEY_ENV".
 OPENROUTER_API_KEY_ENV: str = "OPENROUTER_API_KEY"
 OAI_ANTH_OPENROUTER_KEY_ENV: str = "OAI_ANTH_OPENROUTER_KEY"
+AKASHML_API_KEY_ENV: str = "AKASHML_API_KEY"
+AKASHML_API_BASE_URL_ENV: str = "AKASHML_API_BASE_URL"
 ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"  # noqa: S105  # env var NAME, not a credential
 EXA_API_KEY_ENV: str = "EXA_API_KEY"
@@ -210,6 +212,8 @@ METACULUS_TOKEN_ENV: str = "METACULUS_TOKEN"  # noqa: S105  # env var NAME, not 
 MANTIC_TOKEN_ENV: str = "MANTIC_TOKEN"  # noqa: S105  # env var NAME, not a credential; personal, never donated
 # Master switch; a Mantic run sets it false and fails shut. Receipt: docs/constants.md "donated_openrouter_key_enabled".
 DONATED_OPENROUTER_KEY_ENABLED_ENV: str = "DONATED_OPENROUTER_KEY_ENABLED"
+
+AKASHML_DEFAULT_API_BASE_URL: str = "https://api.akashml.com/v1"
 
 
 def env_flag_enabled(env_name: str, *, default: bool = False) -> bool:
