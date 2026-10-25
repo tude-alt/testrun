@@ -258,7 +258,7 @@ def _run_document_read_sync(url: str, ask: str) -> tuple[str, int, list[str]]:
     """
     credentials = google_genai_credentials()
     if credentials is None:
-        raise ValueError("Missing Google API key: set GCP_API_KEY_1 or GOOGLE_API_KEY")
+        raise ValueError("Missing Vertex AI key: set GCP_API_KEY_1")
     api_key, vertexai = credentials
     return run_url_context_read(
         url,

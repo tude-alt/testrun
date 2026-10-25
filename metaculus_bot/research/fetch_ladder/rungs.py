@@ -1050,7 +1050,7 @@ async def _url_context_admission(
     credentials = google_genai_credentials()
     if credentials is None:
         logger.info(
-            "resolution_source: url_context rung is enabled but neither GCP_API_KEY_1 nor GOOGLE_API_KEY is set — skipping %s",
+            "resolution_source: url_context rung is enabled but GCP_API_KEY_1 is not set — skipping %s",
             urlparse(url).netloc,
         )
         ctx.skip_rung("url_context", direct.status, url, "no_api_key")

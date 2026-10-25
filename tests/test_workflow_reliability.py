@@ -436,8 +436,8 @@ class TestPaidUrlContextRungIsArmedInEveryBotWorkflow:
     @pytest.mark.parametrize("rel_path", _BOT_WORKFLOWS)
     def test_the_key_the_rung_bills_to_is_wired_in_the_same_step(self, rel_path: str) -> None:
         env = self._bot_step_env(_workflow(rel_path))
-        assert "secrets." in str(env.get("GOOGLE_API_KEY", "")), (
-            f"{rel_path} arms the paid url_context rung but wires no GOOGLE_API_KEY secret on the bot "
+        assert "secrets.gcp_api_key_1" in str(env.get("GCP_API_KEY_1", "")), (
+            f"{rel_path} arms the paid url_context rung but wires no gcp_api_key_1 secret on the bot "
             "step, so every admitted read would be a no_api_key skip and the run would read in the "
             "archive exactly like one with the flag off"
         )
@@ -445,10 +445,28 @@ class TestPaidUrlContextRungIsArmedInEveryBotWorkflow:
     @pytest.mark.parametrize("rel_path", _BOT_WORKFLOWS)
     def test_vertex_express_key_is_wired_in_the_bot_step(self, rel_path: str) -> None:
         env = self._bot_step_env(_workflow(rel_path))
-        assert "secrets.GCP_API_KEY_1" in str(env.get("GCP_API_KEY_1", "")), (
+        assert "secrets.gcp_api_key_1" in str(env.get("GCP_API_KEY_1", "")), (
             f"{rel_path} does not wire GCP_API_KEY_1 on its bot step, so native Google GenAI calls "
             "cannot use Vertex AI Express Mode"
         )
+
+    @pytest.mark.parametrize("rel_path", _BOT_WORKFLOWS)
+    def test_requested_provider_credentials_are_wired(self, rel_path: str) -> None:
+        env = self._bot_step_env(_workflow(rel_path))
+        expected_secrets = {
+            "FRED_API_KEY": "FRED_API_KEY",
+            "LITELLM_API_KEY": "LITELLM_API_KEY",
+            "NIMBLE_API_KEY": "NIMBLE_API_KEY",
+            "YDC_API_KEY": "YDC_API_KEY",
+            "AZURE_OPENAI_API_KEY": "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT": "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_DEPLOYMENT_NAME": "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "AZURE_OPENAI_API_VERSION": "AZURE_OPENAI_API_VERSION",
+        }
+        for env_name, secret_name in expected_secrets.items():
+            assert f"secrets.{secret_name}" in str(env.get(env_name, "")), (
+                f"{rel_path} does not wire {env_name} from Actions secrets into the main.py step"
+            )
 
 
 class TestManticWorkflowSpendsOnlyPersonalKeys:
@@ -487,12 +505,12 @@ class TestManticWorkflowSpendsOnlyPersonalKeys:
             "client cannot authenticate and every publish would 401"
         )
 
-    def test_both_donated_routing_flags_are_forced_off(self) -> None:
-        for flag in ("DONATED_OPENROUTER_KEY_ENABLED", "GEMINI_USE_DONATED_OPENROUTER_KEY"):
-            assert f"{flag}: 'false'" in self.mantic_raw, (
-                f"{self.mantic_rel_path} does not set {flag}: 'false'. Both default to true in code, "
-                "and the master switch is what lets cli._assert_personal_keys_only start the run"
-            )
+    def test_donated_routing_master_switch_is_forced_off(self) -> None:
+        flag = "DONATED_OPENROUTER_KEY_ENABLED"
+        assert f"{flag}: 'false'" in self.mantic_raw, (
+            f"{self.mantic_rel_path} does not set {flag}: 'false'. The master switch is what lets "
+            "cli._assert_personal_keys_only start the run"
+        )
 
     def test_the_run_step_selects_mantic_mode(self) -> None:
         assert "--mode mantic" in self.mantic_raw, (

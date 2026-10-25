@@ -32,6 +32,7 @@ from metaculus_bot.constants import (
     ASKNEWS_SECRET_ENV,
     ASKNEWS_WALL_TIMEOUT,
     EXA_API_KEY_ENV,
+    NIMBLE_API_KEY_ENV,
     NATIVE_SEARCH_CONTEXT_SIZE,
     NATIVE_SEARCH_DEFAULT_MODEL,
     NATIVE_SEARCH_MAX_RESULTS,
@@ -42,29 +43,19 @@ from metaculus_bot.constants import (
     NATIVE_SEARCH_TIMEOUT,
     NATIVE_SEARCH_VERBOSITY_DEFAULT,
     NATIVE_SEARCH_VERBOSITY_ENV,
-    OPENROUTER_API_KEY_ENV,
     PERPLEXITY_API_KEY_ENV,
-    PERPLEXITY_RESEARCH_MODEL,
-    PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER,
-    PERPLEXITY_WALL_TIMEOUT,
     RESEARCH_PROVIDER_ENV,
+    YDC_API_KEY_ENV,
 )
-from metaculus_bot.credit_telemetry import llm_call_metadata, plain_llm_key_alias
 from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
 from metaculus_bot.llm_retry import invoke_with_transient_retry
 from metaculus_bot.prompts import OUTSIDE_VENUE_MARKET_ODDS_POLICY, web_research_prompt
 from metaculus_bot.research.provider_diagnostics import record_provider_detail
 from metaculus_bot.research.raw_log import record_raw_research
+from metaculus_bot.research.web_search_chain import configured_web_search_provider, web_search_provider
 
 ResearchCallable = Callable[[MetaculusQuestion], Awaitable[str]]
 logger = logging.getLogger(__name__)
-
-
-class _OmittedPerplexityApiKey:
-    pass
-
-
-_OMITTED_API_KEY = _OmittedPerplexityApiKey()
 
 
 # ---------------------------------------------------------------------------
@@ -395,52 +386,16 @@ def _exa_provider(default_llm: GeneralLlm) -> ResearchCallable:
     return _fetch
 
 
-async def _invoke_perplexity_research(
-    prompt: str,
-    *,
-    use_open_router: bool,
-    api_key: str | _OmittedPerplexityApiKey | None = _OMITTED_API_KEY,
-) -> str:
-    model_name = PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER if use_open_router else PERPLEXITY_RESEARCH_MODEL
-    metadata = llm_call_metadata("perplexity_research", plain_llm_key_alias(model_name))
-    model_kwargs: dict[str, Any] = {
-        "model": model_name,
-        "temperature": None,  # provider-default sampling, pinned against a future GeneralLlm default flip
-        "allowed_tries": 1,  # the elapsed-gated wrapper below is the sole retry owner
-        "metadata": metadata,
-    }
-    if api_key is not _OMITTED_API_KEY:
-        model_kwargs["api_key"] = api_key
-    model = GeneralLlm(**model_kwargs)
-    return await invoke_with_transient_retry(
-        lambda: model.invoke(prompt),
-        wall_timeout=PERPLEXITY_WALL_TIMEOUT,
-        label="perplexity_research",
-    )
+def _perplexity_provider(is_benchmarking: bool = False) -> ResearchCallable:
+    return web_search_provider("perplexity", is_benchmarking=is_benchmarking)
 
 
-def _perplexity_provider(use_open_router: bool = False, is_benchmarking: bool = False) -> ResearchCallable:
-    async def _fetch(question: MetaculusQuestion) -> str:
-        """Run Perplexity research, dropping the market-odds ask when benchmarking (leakage).
+def _nimble_provider() -> ResearchCallable:
+    return web_search_provider("nimble")
 
-        The market-odds ask is interpolated from ``OUTSIDE_VENUE_MARKET_ODDS_POLICY`` rather than
-        restated, because a second copy drifted once: docs/research.md "Primary provider: a
-        priority ladder".
-        """
-        prediction_markets_instruction = (
-            "" if is_benchmarking else f"In addition to news, cover: {OUTSIDE_VENUE_MARKET_ODDS_POLICY}\n"
-        )
-        prompt = (
-            "You are an assistant to a superforecaster.\n"
-            "Generate a concise but detailed rundown of the most relevant news, including if the question would resolve Yes or No based on current information.\n"
-            f"{prediction_markets_instruction}"
-            "Do not produce forecasts yourself. Provide data for the superforecaster.\n\n"
-            f"Question:\n{question.question_text}"
-        )
-        # Omitting api_key preserves LiteLLM's provider-specific environment lookup.
-        return await _invoke_perplexity_research(prompt, use_open_router=use_open_router)
 
-    return _fetch
+def _you_provider() -> ResearchCallable:
+    return web_search_provider("you")
 
 
 def build_native_search_llm(
@@ -548,8 +503,6 @@ def _forced_provider_choice(
     *,
     default_llm: GeneralLlm | None,
     exa_callback: ResearchCallable | None,
-    perplexity_callback: ResearchCallable | None,
-    openrouter_callback: ResearchCallable | None,
     is_benchmarking: bool,
 ) -> tuple[ResearchCallable, str] | None:
     """Resolve an explicit ``RESEARCH_PROVIDER`` override, or None to fall through to auto."""
@@ -564,14 +517,13 @@ def _forced_provider_choice(
         if default_llm is None:
             raise ValueError("RESEARCH_PROVIDER=exa requires default_llm or exa_callback to be provided")
         return _exa_provider(default_llm), "exa"
-    if forced_lc == "perplexity":
-        if perplexity_callback is not None:
-            return perplexity_callback, "perplexity"
-        return _perplexity_provider(use_open_router=False, is_benchmarking=is_benchmarking), "perplexity"
-    if forced_lc == "openrouter":
-        if openrouter_callback is not None:
-            return openrouter_callback, "openrouter"
-        return _perplexity_provider(use_open_router=True, is_benchmarking=is_benchmarking), "openrouter"
+    if forced_lc in {"perplexity", "nimble", "you"}:
+        selected = configured_web_search_provider(forced_lc)
+        if selected is None:
+            raise ValueError(f"RESEARCH_PROVIDER={forced_lc} requires a configured Perplexity, Nimble, or You.com key")
+        return web_search_provider(
+            forced_lc, diagnostics_name=selected, is_benchmarking=is_benchmarking
+        ), selected
     # Any other value behaves as auto
     return None
 
@@ -580,11 +532,9 @@ def _auto_provider_choice(
     *,
     default_llm: GeneralLlm | None,
     exa_callback: ResearchCallable | None,
-    perplexity_callback: ResearchCallable | None,
-    openrouter_callback: ResearchCallable | None,
     is_benchmarking: bool,
 ) -> tuple[ResearchCallable, str]:
-    """First provider whose credentials are present, in the documented priority order."""
+    """Choose one primary; the direct web-search fallback chain owns its internal routing."""
     if os.getenv(ASKNEWS_CLIENT_ID_ENV) and os.getenv(ASKNEWS_SECRET_ENV):
         return _asknews_provider(), "asknews"
 
@@ -595,15 +545,12 @@ def _auto_provider_choice(
             raise ValueError("default_llm must be provided for Exa research provider")
         return _exa_provider(default_llm), "exa"
 
-    if os.getenv(PERPLEXITY_API_KEY_ENV):
-        if perplexity_callback is not None:
-            return perplexity_callback, "perplexity"
-        return _perplexity_provider(use_open_router=False, is_benchmarking=is_benchmarking), "perplexity"
-
-    if os.getenv(OPENROUTER_API_KEY_ENV):
-        if openrouter_callback is not None:
-            return openrouter_callback, "openrouter"
-        return _perplexity_provider(use_open_router=True, is_benchmarking=is_benchmarking), "openrouter"
+    web_provider = configured_web_search_provider()
+    if web_provider is not None:
+        return (
+            web_search_provider("perplexity", diagnostics_name=web_provider, is_benchmarking=is_benchmarking),
+            web_provider,
+        )
 
     async def _empty(_: MetaculusQuestion) -> str:
         return ""
@@ -615,8 +562,6 @@ def choose_provider_with_name(
     default_llm: GeneralLlm | None = None,
     *,
     exa_callback: ResearchCallable | None = None,
-    perplexity_callback: ResearchCallable | None = None,
-    openrouter_callback: ResearchCallable | None = None,
     is_benchmarking: bool = False,
 ) -> tuple[ResearchCallable, str]:
     """Return a research coroutine and its provider name.
@@ -624,9 +569,10 @@ def choose_provider_with_name(
     Priority order replicates pre-refactor behaviour:
     1. AskNews (ASKNEWS_CLIENT_ID & ASKNEWS_SECRET)
     2. Exa.ai (EXA_API_KEY)
-    3. Perplexity (PERPLEXITY_API_KEY)
-    4. Perplexity via OpenRouter (OPENROUTER_API_KEY)
-    5. Fallback stub that returns an empty string.
+    3. Direct Perplexity (PERPLEXITY_API_KEY), with Nimbleway then You.com fallback.
+    4. Nimbleway (NIMBLE_API_KEY) when Perplexity is not configured.
+    5. You.com (YDC_API_KEY) when neither earlier route is configured.
+    6. Fallback stub that returns an empty string.
 
     ``RESEARCH_PROVIDER`` forces a specific provider; an unrecognized value falls
     through to the priority order above.
@@ -637,8 +583,6 @@ def choose_provider_with_name(
             forced.strip().lower(),
             default_llm=default_llm,
             exa_callback=exa_callback,
-            perplexity_callback=perplexity_callback,
-            openrouter_callback=openrouter_callback,
             is_benchmarking=is_benchmarking,
         )
         if choice is not None:
@@ -647,8 +591,6 @@ def choose_provider_with_name(
     return _auto_provider_choice(
         default_llm=default_llm,
         exa_callback=exa_callback,
-        perplexity_callback=perplexity_callback,
-        openrouter_callback=openrouter_callback,
         is_benchmarking=is_benchmarking,
     )
 

@@ -25,10 +25,9 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict
 
-from forecasting_tools import GeneralLlm, clean_indents
+from forecasting_tools import GeneralLlm
 from forecasting_tools.data_models.questions import MetaculusQuestion
 
-from metaculus_bot.api_key_utils import get_openrouter_api_key
 from metaculus_bot.constants import (
     DEFAULT_MAX_CONCURRENT_RESEARCH,
     EXA_API_KEY_ENV,
@@ -37,16 +36,12 @@ from metaculus_bot.constants import (
     GEMINI_SEARCH_MODEL_ENV,
     NATIVE_SEARCH_ENABLED_ENV,
     NATIVE_SEARCH_MODEL_ENV,
-    OPENROUTER_API_KEY_ENV,
-    PERPLEXITY_API_KEY_ENV,
-    PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER,
     PREDICTION_MARKETS_ENABLED_ENV,
     RESOLUTION_SOURCE_ENABLED_ENV,
     TS_ANCHOR_ENABLED_ENV,
     env_flag_enabled,
 )
 from metaculus_bot.fallback_openrouter import _record_deprecation_if_matched
-from metaculus_bot.prompts import OUTSIDE_VENUE_MARKET_ODDS_POLICY
 from metaculus_bot.research import degradation_views
 from metaculus_bot.research.asknews_summarization import summarize_asknews
 from metaculus_bot.research.gap_fill_stages import run_gap_fill_passes
@@ -61,12 +56,12 @@ from metaculus_bot.research.provider_fanout import _empty_provider, await_provid
 from metaculus_bot.research.providers import (
     ResearchCallable,
     _invoke_exa_research,
-    _invoke_perplexity_research,
     choose_provider_with_name,
     is_asknews_subscription_error,
     native_search_provider,
 )
 from metaculus_bot.research.section_format import _demote_inner_headings, assemble_provider_sections
+from metaculus_bot.research.web_search_chain import run_web_search_chain
 from metaculus_bot.time_budget import QuestionTimeBudget
 
 # Re-export for out-of-package callers. See docs/research.md "Orchestrator implementation notes".
@@ -231,9 +226,6 @@ class ResearchOrchestrator:
         provider, provider_name = choose_provider_with_name(
             self._default_llm,
             exa_callback=self._call_exa_smart_searcher,
-            # Each rung gets the vendor its env var pays for. See docs/research.md "Orchestrator implementation notes".
-            perplexity_callback=self._call_perplexity_direct,
-            openrouter_callback=self._call_perplexity_openrouter,
             is_benchmarking=self._is_benchmarking,
         )
         return provider, provider_name
@@ -318,7 +310,9 @@ class ResearchOrchestrator:
 
         return providers
 
-    def _failed_provider_result(self, name: str, exc: Exception, latency_ms: int) -> ProviderResult:
+    def _failed_provider_result(
+        self, name: str, exc: Exception, latency_ms: int, *, details: dict | None = None
+    ) -> ProviderResult:
         """Classify a provider that raised: ``inactive`` for expected off-season AskNews, else ``errored``.
 
         Only ``errored`` bumps ``provider_failure_count`` (which reddens CI) and
@@ -345,6 +339,7 @@ class ResearchOrchestrator:
             latency_ms=latency_ms,
             error_type=type(exc).__name__,
             error_message=str(exc)[:_PROVIDER_ERROR_MESSAGE_MAX_CHARS],
+            details=details or {},
         )
 
     async def _run_providers_parallel(
@@ -372,6 +367,11 @@ class ResearchOrchestrator:
                     raw, fallback_provider = await self._fetch_research_with_fallback(question, provider, name)
                 else:
                     raw = await provider(question)
+                provider_details = pop_provider_detail(qid, name)
+                route_detail = provider_details.get("route", {})
+                actual_provider = route_detail.get("actual_provider") if isinstance(route_detail, dict) else None
+                if actual_provider and actual_provider != name and fallback_provider is None:
+                    fallback_provider = actual_provider
                 used_fallback = fallback_provider is not None
                 # AskNews alone returns raw markdown. See docs/research.md "Orchestrator implementation notes".
                 if name == "asknews" and not used_fallback and raw and raw.strip():
@@ -391,7 +391,7 @@ class ResearchOrchestrator:
                     status=status,
                     chars=len(raw) if has_output else 0,
                     latency_ms=latency_ms,
-                    details=pop_provider_detail(qid, name),
+                    details=provider_details,
                     fallback_provider=fallback_provider,
                 )
                 return (raw, result)
@@ -401,9 +401,9 @@ class ResearchOrchestrator:
                 raise
             except Exception as e:  # noqa: BLE001  # HARNESS-SCAN-EXEMPT-broad-except — converted to a ProviderResult(status=errored/inactive); one provider failing never kills the research phase
                 # No stale entry may leak into a later call. See docs/research.md "Orchestrator implementation notes".
-                pop_provider_detail(qid, name)
+                provider_details = pop_provider_detail(qid, name)
                 latency_ms = int((time.monotonic() - started) * 1000)
-                return ("", self._failed_provider_result(name, e, latency_ms))
+                return ("", self._failed_provider_result(name, e, latency_ms, details=provider_details))
 
         results = await await_providers_within_deadline(providers, _run_one, time_budget)
         combined, provider_results = assemble_provider_sections(results)
@@ -458,7 +458,7 @@ class ResearchOrchestrator:
         """Return ``(research_text, fallback_provider_name)``.
 
         ``fallback_provider_name`` is None on the normal path and otherwise names the
-        vendor that actually answered ("openrouter" / "perplexity" / "exa"). The caller
+        vendor that actually answered (Perplexity, Nimbleway, or You.com). The caller
         uses it for two things: to skip AskNews summarization on already-prose output, and
         to label the research section with the source that produced it.
 
@@ -472,82 +472,56 @@ class ResearchOrchestrator:
         except Exception as exc:
             if self._allow_research_fallback and provider_name == "asknews":
                 logger.warning(f"Primary research provider '{provider_name}' failed with {type(exc).__name__}: {exc}")
-                fallback_text, fallback_name = await self._attempt_research_fallback(question.question_text)
+                qid = getattr(question, "id_of_question", None)
+                fallback_text, fallback_name = await self._attempt_research_fallback(
+                    question.question_text, qid=qid, diagnostics_name=provider_name
+                )
                 if fallback_text is not None:
+                    details = pop_provider_detail(qid, provider_name)
+                    sources = details.setdefault("sources", {})
+                    sources[provider_name] = f"error({type(exc).__name__})"
+                    sources[fallback_name or "fallback"] = f"ok({fallback_name})"
                     record_provider_detail(
-                        getattr(question, "id_of_question", None),
+                        qid,
                         provider_name,
-                        {
-                            "sources": {
-                                provider_name: f"error({type(exc).__name__})",
-                                "fallback": f"ok({fallback_name})",
-                            }
-                        },
+                        details,
                     )
                     return (fallback_text, fallback_name)
             raise
 
-    async def _attempt_research_fallback(self, question_text: str) -> tuple[str | None, str | None]:
+    async def _attempt_research_fallback(
+        self,
+        question_text: str,
+        *,
+        qid: int | None = None,
+        diagnostics_name: str = "asknews",
+    ) -> tuple[str | None, str | None]:
         """Return ``(research_text, provider_name)``, or ``(None, None)`` if no rung answered.
 
         The provider name rides back so the caller can label the section with the vendor
         that actually answered; rendering it as AskNews mislabeled the source in the
         published comment and in the archive.
         """
-        # Ordered by cost, not index quality. See docs/research.md "AskNews fallback (primary-only)".
         try:
-            if os.getenv(OPENROUTER_API_KEY_ENV):
-                logger.info("Falling back to openrouter/perplexity for research")
-                return (await self._call_perplexity(question_text, use_open_router=True), "openrouter")
-            if os.getenv(PERPLEXITY_API_KEY_ENV):
-                logger.info("Falling back to Perplexity for research")
-                return (await self._call_perplexity(question_text, use_open_router=False), "perplexity")
-            if os.getenv(EXA_API_KEY_ENV):
-                logger.info("Falling back to Exa search for research")
-                return (await self._call_exa_smart_searcher(question_text), "exa")
+            return await run_web_search_chain(
+                question_text,
+                qid=qid,
+                diagnostics_name=diagnostics_name,
+                is_benchmarking=self._is_benchmarking,
+            )
         except Exception as fallback_exc:  # noqa: BLE001  # HARNESS-SCAN-EXEMPT-broad-except — best-effort fallback; logs and returns None so the primary error propagates
             logger.warning(f"Fallback research provider also failed: {type(fallback_exc).__name__}: {fallback_exc}")
         return (None, None)
 
-    async def _call_perplexity(self, question: MetaculusQuestion | str, use_open_router: bool = True) -> str:
+    async def _call_perplexity(self, question: MetaculusQuestion | str) -> str:
         question_text = question.question_text if isinstance(question, MetaculusQuestion) else question
-
-        # Interpolated from the one definition in `prompts`. See docs/research.md "Orchestrator implementation notes".
-        prediction_markets_instruction = (
-            ""
-            if self._is_benchmarking
-            else (
-                f"In addition to news, cover: {OUTSIDE_VENUE_MARKET_ODDS_POLICY} "
-                "(If there are no relevant markets of that kind, simply skip reporting on this and "
-                "DO NOT speculate what they would say.)"
-            )
+        text, _actual_provider = await run_web_search_chain(
+            question_text,
+            qid=getattr(question, "id_of_question", None) if isinstance(question, MetaculusQuestion) else None,
+            diagnostics_name="perplexity",
+            is_benchmarking=self._is_benchmarking,
         )
-
-        prompt = clean_indents(
-            f"""
-            You are an assistant to a superforecaster.
-            The superforecaster will give you a question they intend to forecast on.
-            To be a great assistant, you generate a concise but detailed rundown of the most relevant news, including if the question would resolve Yes or No based on current information.
-            {prediction_markets_instruction}
-            You DO NOT produce forecasts yourself; you must provide ALL relevant data to the superforecaster so they can make an expert judgment.
-
-            Question:
-            {question_text}
-            """
-        )
-        # Explicit credential routing: direct Perplexity passes None, OpenRouter resolves its key first.
-        api_key = get_openrouter_api_key(PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER) if use_open_router else None
-        return await _invoke_perplexity_research(
-            prompt,
-            use_open_router=use_open_router,
-            api_key=api_key,
-        )
-
-    async def _call_perplexity_openrouter(self, question: MetaculusQuestion) -> str:
-        return await self._call_perplexity(question, use_open_router=True)
-
-    async def _call_perplexity_direct(self, question: MetaculusQuestion) -> str:
-        return await self._call_perplexity(question, use_open_router=False)
+        return text
 
     async def _call_exa_smart_searcher(self, question: MetaculusQuestion | str) -> str:
         question_text = question.question_text if isinstance(question, MetaculusQuestion) else question

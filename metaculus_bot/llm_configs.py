@@ -8,7 +8,10 @@ from typing import Any
 
 from forecasting_tools import GeneralLlm
 
-from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
+from metaculus_bot.fallback_openrouter import (
+    build_litellm_gateway_with_openrouter_fallback,
+    build_llm_with_openrouter_fallback,
+)
 
 __all__ = [
     "DISAGREEMENT_ANALYZER_LLM",
@@ -62,6 +65,7 @@ _FORECASTER_CONFIG = {**REASONING_MODEL_CONFIG, "allowed_tries": 1}
 
 def forecaster_role(model: str) -> str:
     """``forecaster:<vendor>`` for a supported provider/vendor/model roster slug.
+    """Stable role for OpenRouter-vendor slots and individual gateway roster members.
 
     The CREDIT_ROLE_SPEND spend line every roster slot books under. The roster is
     one slot per model vendor, so the VENDOR is the stable identity of a slot across
@@ -72,26 +76,46 @@ def forecaster_role(model: str) -> str:
     parts = model.split("/")
     if len(parts) < 3 or parts[0] not in {"openrouter", "akashml"}:
         raise ValueError(f"forecaster_role expects an openrouter/ or akashml/<vendor>/<model> slug, got {model!r}")
+    if len(parts) == 2 and parts[0] == "openai":
+        return f"forecaster:{parts[1]}"
+    if len(parts) < 3 or parts[0] != "openrouter":
+        raise ValueError(
+            f"forecaster_role expects an openrouter/<vendor>/<model> or openai/<model> slug, got {model!r}"
+        )
     return f"forecaster:{parts[1]}"
 
 
+# OpenRouter slugs verified from the public model catalog on 2026-10-10.
+GATEWAY_OPENROUTER_FALLBACKS: dict[str, str] = {
+    "nova-micro": "amazon/nova-micro-v1",
+    "nova-lite": "amazon/nova-lite-v1",
+    "nova-pro": "amazon/nova-pro-v1",
+    "nova-2-lite": "amazon/nova-2-lite-v1",
+    "claude-sonnet-4.6": "anthropic/claude-sonnet-4.6",
+    "claude-opus-4.6": "anthropic/claude-opus-4.6",
+}
+
+
 def _forecaster_slot(model: str, **kwargs: Any) -> GeneralLlm:
-    """One roster member, booked in the CREDIT_ROLE_SPEND ledger under ``forecaster:<vendor>``.
+    """Construct one roster member and attribute it under its stable slot role.
 
     The role is derived from the slug rather than written beside it so a roster swap cannot
     leave a slot mislabeled.
     """
+    if model in GATEWAY_OPENROUTER_FALLBACKS:
+        return build_litellm_gateway_with_openrouter_fallback(
+            gateway_model=model,
+            openrouter_model=GATEWAY_OPENROUTER_FALLBACKS[model],
+            role=forecaster_role(f"openai/{model}"),
+            **_FORECASTER_CONFIG,
+            **kwargs,
+        )
     return build_llm_with_openrouter_fallback(model=model, role=forecaster_role(model), **_FORECASTER_CONFIG, **kwargs)
 
 
-# SEASON-START RITUAL (operator, not an implementing session): resolve "latest per vendor"
-# with a LIVE OpenRouter model-list read, never from memory — nothing in this repo can say
-# what the newest OpenAI/Anthropic/Google model currently is, and the 2026-08-31 gemini-slot
-# review found that a roster decision needs that one read before anything else:
-#   curl -s https://openrouter.ai/api/v1/models | jq -r '.data[] | [.id, .created] | @tsv' | sort
-# filtered per vendor prefix (openai/, anthropic/, google/, x-ai/); what to check on the
-# result is in docs/operations.md "Season-start checklist". Any change here is a config-era
-# boundary for residual analysis, so make it once, before the first question.
+# Operator-selected gateway roster. The gateway model aliases and OpenRouter fallback IDs
+# are paired in GATEWAY_OPENROUTER_FALLBACKS; keep the pairing and stable slot roles together.
+# A roster or route change starts a config era at its merge-to-main committer timestamp.
 FORECASTER_LLMS: list[GeneralLlm] = [
     # 2026-07-20: forecaster roster dropped from 6 to a 3-member latest-per-vendor
     # core (1 OpenAI / 1 Anthropic / 1 Google); two AkashML-routed vendor slots were
@@ -151,6 +175,15 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # reasoning controls rather than OpenRouter's common effort parameter.
     _forecaster_slot("akashml/deepseek-ai/DeepSeek-V4-Flash"),
     _forecaster_slot("akashml/zai-org/GLM-5.3"),
+    _forecaster_slot(model)
+    for model in (
+        "nova-micro",
+        "nova-lite",
+        "nova-pro",
+        "nova-2-lite",
+        "claude-sonnet-4.6",
+        "claude-opus-4.6",
+    )
 ]
 
 

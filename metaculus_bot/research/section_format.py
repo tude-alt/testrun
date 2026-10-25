@@ -32,6 +32,8 @@ PROVIDER_SECTION_HEADERS: dict[str, str] = {
     "resolution_source": "## Resolution Source Snapshot",
     "exa": "## Web Research (Exa)",
     "perplexity": "## Web Research (Perplexity)",
+    "nimble": "## Web Research (Nimbleway)",
+    "you": "## Web Research (You.com)",
     "openrouter": "## Web Research (OpenRouter)",
     "custom": "## Research (Custom)",
 }

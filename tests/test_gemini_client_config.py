@@ -75,11 +75,11 @@ class TestGoogleGenAiCredentials:
 
         assert google_genai_credentials() == ("vertex-key", True)
 
-    def test_ai_studio_key_remains_the_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_ai_studio_key_does_not_enable_native_gemini(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("GCP_API_KEY_1", raising=False)
         monkeypatch.setenv("GOOGLE_API_KEY", "ai-studio-key")
 
-        assert google_genai_credentials() == ("ai-studio-key", False)
+        assert google_genai_credentials() is None
 
     def test_no_google_key_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("GCP_API_KEY_1", raising=False)

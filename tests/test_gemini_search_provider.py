@@ -110,7 +110,7 @@ def test_builder_raises_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GCP_API_KEY_1", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-    with pytest.raises(ValueError, match="GCP_API_KEY_1 or GOOGLE_API_KEY"):
+    with pytest.raises(ValueError, match="GCP_API_KEY_1"):
         gemini_search.build_gemini_client()
 
 
@@ -126,7 +126,7 @@ def test_builder_uses_vertex_express_mode_for_gcp_key(monkeypatch: pytest.Monkey
 
 @pytest.mark.asyncio
 async def test_provider_uses_default_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     monkeypatch.delenv("GEMINI_SEARCH_MODEL", raising=False)
     fake_client = _make_client_with_response(_make_response("some research text"))
 
@@ -135,13 +135,13 @@ async def test_provider_uses_default_model(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert fake_client.aio.models.generate_content.await_count == 1
     call_kwargs = fake_client.aio.models.generate_content.await_args.kwargs
-    assert call_kwargs["model"] == "gemini-3.8-flash"
+    assert call_kwargs["model"] == "gemini-3.1-pro-preview"
     assert "Will X happen?" in call_kwargs["contents"]
 
 
 @pytest.mark.asyncio
 async def test_provider_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     monkeypatch.setenv("GEMINI_SEARCH_MODEL", "gemini-2.5-flash")
     fake_client = _make_client_with_response(_make_response("research text"))
 
@@ -153,7 +153,7 @@ async def test_provider_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> No
 
 @pytest.mark.asyncio
 async def test_provider_uses_explicit_slug(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     monkeypatch.setenv("GEMINI_SEARCH_MODEL", "gemini-2.5-flash")
     fake_client = _make_client_with_response(_make_response("research text"))
 
@@ -165,7 +165,7 @@ async def test_provider_uses_explicit_slug(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.asyncio
 async def test_provider_attaches_google_search_and_url_context_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     fake_client = _make_client_with_response(_make_response("research text"))
 
     with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client):
@@ -179,7 +179,7 @@ async def test_provider_attaches_google_search_and_url_context_tools(monkeypatch
 
 @pytest.mark.asyncio
 async def test_benchmarking_carve_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     fake_client = _make_client_with_response(_make_response("research text"))
 
     with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client):
@@ -192,7 +192,7 @@ async def test_benchmarking_carve_out(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_non_benchmarking_includes_prediction_markets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     fake_client = _make_client_with_response(_make_response("research text"))
 
     with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client):
@@ -205,7 +205,7 @@ async def test_non_benchmarking_includes_prediction_markets(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_prompt_carries_the_mc_ballot(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     fake_client = _make_client_with_response(_make_response("research text"))
     question = _make_q("Who will win the World Yo-Yo Contest?")
     question.options = ["Mir Kim", "Hunter Feuerstein", "Other"]
@@ -226,7 +226,7 @@ async def test_prompt_carries_the_mc_ballot(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_real_selfcite_fixture_links_are_numbered_and_redirects_removed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = _fixture_first_response()
     redirect_urls = list(
         dict.fromkeys(re.findall(r"https://vertexaisearch\.cloud\.google\.com/grounding-api-redirect/[^)]+", text))
@@ -256,7 +256,7 @@ async def test_real_selfcite_fixture_links_are_numbered_and_redirects_removed(
 
 @pytest.mark.asyncio
 async def test_real_selfcite_fixture_preserves_emphasized_labels(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = _fixture_second_response()
     redirect_url = next(
         iter(re.findall(r"https://vertexaisearch\.cloud\.google\.com/grounding-api-redirect/[^)]+", text))
@@ -278,7 +278,7 @@ async def test_real_selfcite_fixture_preserves_emphasized_labels(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_duplicate_resolved_targets_share_a_source_number(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"First [one]({_SEARCH_REDIRECT}) and second [two]({_SEARCH_REDIRECT_TWO})."
     fake_client = _make_client_with_response(_make_response(text))
     resolution = {_SEARCH_REDIRECT: _TARGET_ONE, _SEARCH_REDIRECT_TWO: _TARGET_ONE}
@@ -296,7 +296,7 @@ async def test_duplicate_resolved_targets_share_a_source_number(monkeypatch: pyt
 
 @pytest.mark.asyncio
 async def test_unresolved_link_is_marked_without_leaking_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"Known [known]({_SEARCH_REDIRECT}) and missing [missing]({_SEARCH_REDIRECT_TWO})."
     fake_client = _make_client_with_response(_make_response(text))
 
@@ -320,7 +320,7 @@ async def test_zero_verified_links_suppresses_and_records_loss(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"Confident claim [source]({_SEARCH_REDIRECT})."
     response = _make_response(text, web_search_queries=[f"query {i}" for i in range(30)])
     fake_client = _make_client_with_response(response)
@@ -335,14 +335,14 @@ async def test_zero_verified_links_suppresses_and_records_loss(
     assert out == ""
     assert "GEMINI_SELF_CITATION: question=6004" in caplog.text
     assert "links=1 unique=1 resolved=0 unverified=1 sources=0" in caplog.text
-    assert "GEMINI_UNGROUNDED_SUPPRESSED: question=6004 model=gemini-3.8-flash queries=30" in caplog.text
+    assert "GEMINI_UNGROUNDED_SUPPRESSED: question=6004 model=gemini-3.1-pro-preview queries=30" in caplog.text
     detail = pop_provider_detail(6004, "gemini_search")
     assert _is_lost_source(detail["sources"]["grounding"])
 
 
 @pytest.mark.asyncio
 async def test_successful_url_context_link_is_verified(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     read_url = "https://gov.example/report"
     response = _make_response(
         f"The report says [report]({read_url}).",
@@ -363,7 +363,7 @@ async def test_successful_url_context_link_is_verified(monkeypatch: pytest.Monke
 
 @pytest.mark.asyncio
 async def test_nonredirect_link_not_read_is_unverified(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     unread = "https://unread.example/article"
     text = f"Search result [search]({_SEARCH_REDIRECT}); unrelated [page]({unread})."
     fake_client = _make_client_with_response(_make_response(text))
@@ -387,7 +387,7 @@ async def test_attribution_check_uses_resolved_domains(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"The claim [[A: NASA]]({_SEARCH_REDIRECT}) is disputed."
     fake_client = _make_client_with_response(_make_response(text))
 
@@ -424,7 +424,7 @@ async def test_a_tier_tag_used_as_a_link_label_renders_as_a_checked_tag(
     monkeypatch: pytest.MonkeyPatch,
     cited: str,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"Zero major hurricanes so far {cited.format(redirect=_SEARCH_REDIRECT)}. Six storms [B: Reuters]."
     fake_client = _make_client_with_response(_make_response(text))
 
@@ -464,7 +464,7 @@ async def test_generic_tier_tags_are_rewritten_and_counted(
 ) -> None:
     """A class tag names no outlet, so it is rewritten like an unmatched name and counted
     apart in the provider details; the zero counts are recorded too, as measurements."""
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"The oldest age is 122 [[A: peer-reviewed journal]]({_SEARCH_REDIRECT}) and [B: NASA] agrees."
     fake_client = _make_client_with_response(_make_response(text))
 
@@ -494,7 +494,7 @@ async def test_generic_tier_tags_are_rewritten_and_counted(
 async def test_self_citation_marker_reports_link_counts(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     text = f"One [a]({_SEARCH_REDIRECT}) and [again]({_SEARCH_REDIRECT}) plus [b]({_SEARCH_REDIRECT_TWO})."
     fake_client = _make_client_with_response(_make_response(text))
     resolution = {_SEARCH_REDIRECT: _TARGET_ONE, _SEARCH_REDIRECT_TWO: _TARGET_TWO}
@@ -515,7 +515,7 @@ async def test_self_citation_marker_reports_link_counts(
 async def test_resolution_is_skipped_when_the_shared_wall_is_exhausted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     monkeypatch.setattr(gemini_search, "GEMINI_SEARCH_TIMEOUT", 0.0)
     response = _make_response(f"Claim [source]({_SEARCH_REDIRECT}).")
     resolver = AsyncMock(return_value={_SEARCH_REDIRECT: _TARGET_ONE})
@@ -535,7 +535,7 @@ async def test_resolution_is_skipped_when_the_shared_wall_is_exhausted(
 async def test_one_sdk_call_and_no_grounding_retry(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     fake_client = _make_client_with_response(_make_response("Parametric text without a link."))
 
     with (
@@ -555,7 +555,7 @@ async def test_q38195_confident_fake_tags_without_links_are_suppressed(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     fabricated = "Generative AI drove labor tension. Key contract expirations: Boeing IAM 837 [A: official]."
     response = _make_response(fabricated, web_search_queries=[f"query {i}" for i in range(30)])
     fake_client = _make_client_with_response(response)
@@ -625,7 +625,7 @@ class TestStripModelCitationIndices:
 
 @pytest.mark.asyncio
 async def test_url_context_telemetry_marker_remains_in_returned_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
     read_url = "https://example.com/ok"
     response = _make_response(
         f"Body [source]({read_url}).",
@@ -651,7 +651,7 @@ async def test_url_context_telemetry_marker_remains_in_returned_text(monkeypatch
 class TestParallelProviderSelectionGemini:
     def test_select_research_providers_includes_gemini_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GEMINI_SEARCH_ENABLED", "true")
-        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
         monkeypatch.delenv("NATIVE_SEARCH_ENABLED", raising=False)
         monkeypatch.delenv("FINANCIAL_DATA_ENABLED", raising=False)
         monkeypatch.setenv("ASKNEWS_CLIENT_ID", "id")
@@ -694,7 +694,7 @@ class TestParallelProviderSelectionGemini:
 class TestGeminiClientConfigAndUsage:
     @pytest.mark.asyncio
     async def test_client_carries_the_timeout_and_retry_ladder(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
         from metaculus_bot.constants import GEMINI_SEARCH_HTTP_ATTEMPTS, GEMINI_SEARCH_HTTP_TIMEOUT_MS
 
         fake_client = _make_client_with_response(_make_response("research text"))
@@ -714,7 +714,7 @@ class TestGeminiClientConfigAndUsage:
 
     @pytest.mark.asyncio
     async def test_thinking_level_is_set_explicitly(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
         from metaculus_bot.constants import GEMINI_SEARCH_THINKING_LEVEL
 
         fake_client = _make_client_with_response(_make_response("research text"))
@@ -730,7 +730,7 @@ class TestGeminiClientConfigAndUsage:
     async def test_usage_marker_logged_for_a_cited_response(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
         response = _make_response(
             f"Body [source]({_SEARCH_REDIRECT}).",
             web_search_queries=["who won"],
@@ -759,7 +759,7 @@ class TestGeminiClientConfigAndUsage:
     async def test_usage_marker_logged_on_suppressed_branch(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        monkeypatch.setenv("GCP_API_KEY_1", "fake-key")
         response = _make_response(
             "Ungrounded prose.",
             web_search_queries=[f"query {i}" for i in range(30)],

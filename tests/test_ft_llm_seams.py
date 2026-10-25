@@ -239,17 +239,10 @@ class TestProductionKwargShapesReachAcompletion:
         assert sent["metadata"][ROLE_METADATA_KEY] == "parser"
 
     async def test_real_forecaster_roster_funnels_declared_kwargs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Every real forecaster slot funnels its declared kwargs (and temperature=None) intact.
-
-        Roster-agnostic: iterates the live ``FORECASTER_LLMS`` singletons and asserts
-        the funnel is transparent for whatever is configured. Also confirms the
-        current production reasoning/verbosity shapes are present on at least one slot
-        so this stays a meaningful pin rather than a vacuous loop, and that no slot sends
-        ``verbosity`` beside ``reasoning``: on Anthropic, OpenRouter maps both onto one
-        effort knob and verbosity wins, which silently ran the Opus slot at high, not xhigh.
-        """
+        """Every gateway roster member sends its model, endpoint, key, and sampling config intact."""
         assert FORECASTER_LLMS, "roster must be non-empty for this pin to mean anything"
-        saw_xhigh_reasoning = False
+        assert len(FORECASTER_LLMS) == 6
+        monkeypatch.setenv("LITELLM_API_KEY", "gateway-test-key")
 
         for llm in FORECASTER_LLMS:
             declared = llm.litellm_kwargs
@@ -261,16 +254,11 @@ class TestProductionKwargShapesReachAcompletion:
             # temperature=None must survive for every reasoning forecaster (no injected 0).
             assert sent["temperature"] is None
             assert sent["timeout"] == declared["timeout"]
-            if "reasoning" in declared:
-                assert sent["reasoning"] == declared["reasoning"]
-                if declared["reasoning"] == _PROD_REASONING_XHIGH:
-                    saw_xhigh_reasoning = True
+            assert sent["base_url"] == "https://litellm.vision.aivar.app/v1"
+            assert sent["api_key"] == "gateway-test-key"
+            assert sent["model"] == llm.model
             if "extra_body" in declared:
                 assert sent["extra_body"] == declared["extra_body"]
-            sends_verbosity = "verbosity" in sent or "verbosity" in (sent.get("extra_body") or {})
-            assert not ("reasoning" in sent and sends_verbosity), f"{llm.model} sends verbosity beside reasoning"
-
-        assert saw_xhigh_reasoning, "expected a forecaster with reasoning={'effort':'xhigh'} in the roster"
 
 
 def test_no_llm_config_sends_verbosity_beside_reasoning() -> None:
