@@ -101,6 +101,7 @@ jobs:
           EXA_API_KEY: ${{ secrets.exa_key }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          AKASHML_API_KEY: ${{ secrets.akashml_api_key }}
           OAI_ANTH_OPENROUTER_KEY: ${{ secrets.OAI_ANTH_OPENROUTER_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}

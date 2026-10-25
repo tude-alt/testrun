@@ -61,16 +61,17 @@ _FORECASTER_CONFIG = {**REASONING_MODEL_CONFIG, "allowed_tries": 1}
 
 
 def forecaster_role(model: str) -> str:
-    """``forecaster:<vendor>`` for an ``openrouter/<vendor>/<model>`` roster slug.
+    """``forecaster:<vendor>`` for a supported provider/vendor/model roster slug.
 
     The CREDIT_ROLE_SPEND spend line every roster slot books under. The roster is
-    latest-per-vendor, one slot each, so the VENDOR is the stable identity of a slot
-    across model rotations — a per-model role would start a new time series at every swap
-    and defeat the era-over-era cost comparison this exists for.
+    one slot per model vendor, so the VENDOR is the stable identity of a slot across
+    model rotations — a per-model role would start a new time series at every swap and
+    defeat the era-over-era cost comparison this exists for. OpenRouter and AkashML
+    both use provider/vendor/model slugs.
     """
     parts = model.split("/")
-    if len(parts) < 3 or parts[0] != "openrouter":
-        raise ValueError(f"forecaster_role expects an openrouter/<vendor>/<model> slug, got {model!r}")
+    if len(parts) < 3 or parts[0] not in {"openrouter", "akashml"}:
+        raise ValueError(f"forecaster_role expects an openrouter/ or akashml/<vendor>/<model> slug, got {model!r}")
     return f"forecaster:{parts[1]}"
 
 
@@ -93,7 +94,8 @@ def _forecaster_slot(model: str, **kwargs: Any) -> GeneralLlm:
 # boundary for residual analysis, so make it once, before the first question.
 FORECASTER_LLMS: list[GeneralLlm] = [
     # 2026-07-20: forecaster roster dropped from 6 to a 3-member latest-per-vendor
-    # triple (1 OpenAI / 1 Anthropic / 1 Google). This is the SECOND roster change
+    # core (1 OpenAI / 1 Anthropic / 1 Google); two AkashML-routed vendor slots were
+    # added 2026-10-25 below. This is the SECOND roster change
     # on 2026-07-20 and supersedes the morning fable-5 → opus-4.7 swap (7a76df6) as
     # the config-era boundary for residual analysis. Removed: gpt-5.5,
     # claude-opus-4.7, grok-4.5. Two adversarially-verified analyses
@@ -144,6 +146,11 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # AI Studio BYOK integration with quota 0, so it would 429 there); see the
     # TODO(gemini-3.1-pro-donated) tag pending the Metaculus-side BYOK fix.
     _forecaster_slot("openrouter/google/gemini-3.1-pro-preview"),
+    # AkashML forecasters use Akash's API IDs after the provider prefix. Keep
+    # provider-default reasoning settings because Akash exposes model-specific
+    # reasoning controls rather than OpenRouter's common effort parameter.
+    _forecaster_slot("akashml/deepseek-ai/DeepSeek-V4-Flash"),
+    _forecaster_slot("akashml/zai-org/GLM-5.3"),
 ]
 
 

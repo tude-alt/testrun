@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 
 from forecasting_tools import MetaculusQuestion, ReasonedPrediction
@@ -23,6 +24,7 @@ from metaculus_bot.comment.markers import (
     format_stacker_skip_reason_marker,
 )
 from metaculus_bot.comment.trimming import trim_comment, trim_section
+from metaculus_bot.constants import COMMENT_VISIBLE_SOURCE_LIMIT
 from metaculus_bot.performance_analysis.parsing import (
     annotate_forecaster_bullets_with_models,
     extract_model_display_name_from_reasoning,
@@ -31,6 +33,9 @@ from metaculus_bot.question_types import question_type_of
 from metaculus_bot.tool_runner import _feature_enabled as _tool_runner_feature_enabled
 
 logger = logging.getLogger(__name__)
+
+_SOURCE_URL_RE = re.compile(r"https?://[^\s<>)\]]+", re.IGNORECASE)
+_MODEL_LINE_RE = re.compile(r"^Model:\s*(\S+)", re.MULTILINE)
 
 
 def format_research_summary_with_models(
@@ -71,6 +76,36 @@ def _forecasters_used_suffix(n_used: int | None, n_configured: int | None) -> st
     if n_used is None or n_configured is None:
         return ""
     return f"\n{format_forecasters_used_marker(n_used, n_configured)}"
+
+
+def _brief_comment(base_text: str, n_used: int | None, n_configured: int | None) -> str:
+    source_urls = list(
+        dict.fromkeys(
+            match.group(0).rstrip(".,;:")
+            for match in _SOURCE_URL_RE.finditer(base_text)
+        )
+    )
+    visible_sources = [f"[Source {index}]({url})" for index, url in enumerate(source_urls[:COMMENT_VISIBLE_SOURCE_LIMIT], 1)]
+    sources_text = ", ".join(visible_sources) if visible_sources else "none cited"
+
+    models = [match.rsplit("/", 1)[-1] for match in _MODEL_LINE_RE.findall(base_text)]
+    forecasters_text = "not identified"
+    if models:
+        first, final = models[0], models[-1]
+        forecasters_text = first if first == final else f"{first} -> {final}"
+    if n_used is not None and n_configured is not None:
+        forecasters_text += f" ({n_used}/{n_configured} used)"
+
+    details = re.sub(r"</details\s*>", "&lt;/details&gt;", base_text, flags=re.IGNORECASE)
+    return (
+        "# Forecast summary\n"
+        f"Sources: {sources_text}\n"
+        f"Forecasters: {forecasters_text}\n\n"
+        "<details>\n"
+        "<summary>Full research and forecast details</summary>\n\n"
+        f"{details}\n"
+        "</details>"
+    )
 
 
 def _stacker_outcome_markers(stacker_outcome: str) -> tuple[str, str]:
@@ -120,9 +155,10 @@ def build_unified_explanation(
     FORECASTERS_USED marker rides the comment tail; when omitted the comment is
     unchanged (back-compat with callers that don't track ensemble size).
     """
+    brief_text = _brief_comment(base_text, n_used, n_configured)
     ensemble_suffix = _forecasters_used_suffix(n_used, n_configured)
     if aggregation_strategy not in (AggregationStrategy.STACKING, AggregationStrategy.CONDITIONAL_STACKING):
-        return trim_comment(f"{base_text}{ensemble_suffix}")
+        return trim_comment(f"{brief_text}{ensemble_suffix}")
 
     assert stacker_outcome is not None, (
         "stacker_outcome must be provided for STACKING/CONDITIONAL_STACKING strategies; "
@@ -135,7 +171,7 @@ def build_unified_explanation(
     skip_reason_suffix = "" if skip_reason is None else f"\n{format_stacker_skip_reason_marker(skip_reason)}"
     tools_marker = TOOLS_USED_MARKER_TRUE if _tool_runner_feature_enabled(qtype) else TOOLS_USED_MARKER_FALSE
     return trim_comment(
-        f"{base_text}\n{outcome_marker}{skip_reason_suffix}\n{legacy_marker}\n{tools_marker}{ensemble_suffix}\n"
+        f"{brief_text}\n{outcome_marker}{skip_reason_suffix}\n{legacy_marker}\n{tools_marker}{ensemble_suffix}\n"
     )
 
 
