@@ -193,6 +193,7 @@ FORECASTS_SECTION_CHAR_LIMIT: int = 89_999
 RESEARCH_SECTION_CHAR_LIMIT: int = 44_999
 SUMMARY_SECTION_CHAR_LIMIT: int = 13_999
 COMMENT_CHAR_LIMIT: int = 149_999
+COMMENT_VISIBLE_SOURCE_LIMIT: int = 2
 
 RESEARCH_PROVIDER_ENV: str = "RESEARCH_PROVIDER"  # auto|asknews|exa|perplexity|openrouter, case-insensitive
 
@@ -202,6 +203,8 @@ TEST_QUESTIONS_OVERRIDE_ENV: str = "TEST_QUESTIONS_OVERRIDE"
 # Named so the literals are not duplicated. Receipt: docs/constants.md "OPENROUTER_API_KEY_ENV".
 OPENROUTER_API_KEY_ENV: str = "OPENROUTER_API_KEY"
 OAI_ANTH_OPENROUTER_KEY_ENV: str = "OAI_ANTH_OPENROUTER_KEY"
+AKASHML_API_KEY_ENV: str = "AKASHML_API_KEY"
+AKASHML_API_BASE_URL_ENV: str = "AKASHML_API_BASE_URL"
 LITELLM_API_KEY_ENV: str = "LITELLM_API_KEY"
 LITELLM_API_BASE_URL: str = "https://litellm.vision.aivar.app/v1"
 ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
@@ -214,6 +217,8 @@ METACULUS_TOKEN_ENV: str = "METACULUS_TOKEN"  # noqa: S105  # env var NAME, not 
 MANTIC_TOKEN_ENV: str = "MANTIC_TOKEN"  # noqa: S105  # env var NAME, not a credential; personal, never donated
 # Master switch; a Mantic run sets it false and fails shut. Receipt: docs/constants.md "donated_openrouter_key_enabled".
 DONATED_OPENROUTER_KEY_ENABLED_ENV: str = "DONATED_OPENROUTER_KEY_ENABLED"
+
+AKASHML_DEFAULT_API_BASE_URL: str = "https://api.akashml.com/v1"
 
 
 def env_flag_enabled(env_name: str, *, default: bool = False) -> bool:

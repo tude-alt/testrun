@@ -327,14 +327,16 @@ class TestLlmCallMetadata:
             ("openrouter/openai/gpt-5.6-sol", "forecaster:openai"),
             ("openrouter/anthropic/claude-opus-4.8", "forecaster:anthropic"),
             ("openrouter/google/gemini-3.1-pro-preview", "forecaster:google"),
+            ("akashml/deepseek-ai/DeepSeek-V4-Flash", "forecaster:deepseek-ai"),
+            ("akashml/zai-org/GLM-5.3", "forecaster:zai-org"),
         ],
     )
     def test_forecaster_role_is_the_vendor_slot(self, model: str, expected: str) -> None:
         """Latest-per-vendor roster: the slot outlives any one model, so the role does too."""
         assert forecaster_role(model) == expected
 
-    def test_forecaster_role_rejects_a_non_openrouter_slug(self) -> None:
-        with pytest.raises(ValueError, match="openrouter/<vendor>/<model>"):
+    def test_forecaster_role_rejects_an_unsupported_provider_slug(self) -> None:
+        with pytest.raises(ValueError, match="openrouter/ or akashml/<vendor>/<model>"):
             forecaster_role("perplexity/sonar")
 
     def test_plain_llm_key_alias(self) -> None:
@@ -780,6 +782,11 @@ class TestProdLlmsAreRoleTagged:
         assert FORECASTER_LLMS, "roster must be non-empty for this pin to mean anything"
         for llm in FORECASTER_LLMS:
             assert llm.litellm_kwargs["metadata"][ROLE_METADATA_KEY] == forecaster_role(llm.model)
+
+    def test_akashml_forecasters_are_in_the_roster(self) -> None:
+        models = {llm.model for llm in FORECASTER_LLMS}
+        assert "akashml/deepseek-ai/DeepSeek-V4-Flash" in models
+        assert "akashml/zai-org/GLM-5.3" in models
 
     @pytest.mark.parametrize(
         ("llm", "role"),

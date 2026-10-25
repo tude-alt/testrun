@@ -121,6 +121,32 @@ class TestBuildUnifiedExplanation:
         assert "STACKER_OUTCOME=" not in result
         assert "Body text." in result
 
+    def test_brief_comment_shows_sources_and_first_and_final_forecasters(self):
+        base_text = (
+            "## Report 1 Summary\n"
+            "### Forecasts\n*Forecaster 1*: 20.0%\n*Forecaster 2*: 30.0%\n"
+            "### Research Summary\n[Study](https://example.com/study)\n"
+            "Source: https://example.com/plain\n"
+            "## R1: Forecaster 1 Reasoning\nModel: akashml/deepseek-ai/DeepSeek-V4-Flash\n"
+            "Reasoning one.\n"
+            "## R1: Forecaster 2 Reasoning\nModel: akashml/zai-org/GLM-5.3\n"
+            "Reasoning two."
+        )
+        result = build_unified_explanation(
+            base_text=base_text,
+            question=self._make_question(),
+            aggregation_strategy=AggregationStrategy.MEAN,
+            stacker_outcome=None,
+            n_used=2,
+            n_configured=5,
+        )
+
+        assert "Sources: [Source 1](https://example.com/study)" in result
+        assert "[Source 2](https://example.com/plain)" in result
+        assert "Forecasters: DeepSeek-V4-Flash -> GLM-5.3 (2/5 used)" in result
+        assert "<summary>Full research and forecast details</summary>" in result
+        assert "Reasoning one." in result
+
     def test_median_strategy_just_trims(self):
 
         base_text = "# SUMMARY\nContent."

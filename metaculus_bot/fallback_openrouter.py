@@ -8,6 +8,9 @@ import litellm.exceptions
 from forecasting_tools import GeneralLlm
 
 from metaculus_bot.constants import (
+    AKASHML_API_BASE_URL_ENV,
+    AKASHML_API_KEY_ENV,
+    AKASHML_DEFAULT_API_BASE_URL,
     CREDIT_ALERT_RESUME_DATE,
     LITELLM_API_BASE_URL,
     LITELLM_API_KEY_ENV,
@@ -632,6 +635,18 @@ def build_llm_with_openrouter_fallback(model: str, *, role: str | None = None, *
     ``CREDIT_ROLE_SPEND`` ledger (``credit_telemetry.llm_call_metadata`` lists the roles in
     use). Pass it at every production call site; a missing role books as ``untagged``.
     """
+    if model.startswith("akashml/"):
+        api_key = os.getenv(AKASHML_API_KEY_ENV)
+        base_url = os.getenv(AKASHML_API_BASE_URL_ENV, AKASHML_DEFAULT_API_BASE_URL)
+        if api_key:
+            return GeneralLlm(
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                metadata=llm_call_metadata(role, plain_llm_key_alias(model)),
+                **kwargs,
+            )
+        return GeneralLlm(model=model, metadata=llm_call_metadata(role, plain_llm_key_alias(model)), **kwargs)
     if _is_gemini_openrouter_model(model):
         from metaculus_bot.gemini_routing import (  # noqa: PLC0415  # late binding avoids a module cycle
             build_vertex_first_gemini,

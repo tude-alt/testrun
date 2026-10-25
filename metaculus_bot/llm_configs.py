@@ -64,14 +64,18 @@ _FORECASTER_CONFIG = {**REASONING_MODEL_CONFIG, "allowed_tries": 1}
 
 
 def forecaster_role(model: str) -> str:
+    """``forecaster:<vendor>`` for a supported provider/vendor/model roster slug.
     """Stable role for OpenRouter-vendor slots and individual gateway roster members.
 
     The CREDIT_ROLE_SPEND spend line every roster slot books under. The roster is
-    latest-per-vendor, one slot each, so the VENDOR is the stable identity of a slot
-    across model rotations — a per-model role would start a new time series at every swap
-    and defeat the era-over-era cost comparison this exists for.
+    one slot per model vendor, so the VENDOR is the stable identity of a slot across
+    model rotations — a per-model role would start a new time series at every swap and
+    defeat the era-over-era cost comparison this exists for. OpenRouter and AkashML
+    both use provider/vendor/model slugs.
     """
     parts = model.split("/")
+    if len(parts) < 3 or parts[0] not in {"openrouter", "akashml"}:
+        raise ValueError(f"forecaster_role expects an openrouter/ or akashml/<vendor>/<model> slug, got {model!r}")
     if len(parts) == 2 and parts[0] == "openai":
         return f"forecaster:{parts[1]}"
     if len(parts) < 3 or parts[0] != "openrouter":
@@ -113,6 +117,64 @@ def _forecaster_slot(model: str, **kwargs: Any) -> GeneralLlm:
 # are paired in GATEWAY_OPENROUTER_FALLBACKS; keep the pairing and stable slot roles together.
 # A roster or route change starts a config era at its merge-to-main committer timestamp.
 FORECASTER_LLMS: list[GeneralLlm] = [
+    # 2026-07-20: forecaster roster dropped from 6 to a 3-member latest-per-vendor
+    # core (1 OpenAI / 1 Anthropic / 1 Google); two AkashML-routed vendor slots were
+    # added 2026-10-25 below. This is the SECOND roster change
+    # on 2026-07-20 and supersedes the morning fable-5 → opus-4.7 swap (7a76df6) as
+    # the config-era boundary for residual analysis. Removed: gpt-5.5,
+    # claude-opus-4.7, grok-4.5. Two adversarially-verified analyses
+    # (scratch/ensemble_3member_audit_2026-07-20/ +
+    # scratch/ensemble_power_model_2026-07-20/) found the triple non-inferior on
+    # binary/MC and only a fragile numeric lean toward the full roster (+3.24,
+    # 95% CI [-2.5, +9.1], P(loss>1pt/Q)=0.80, driven by 2 questions) — accepted as
+    # a ship-and-watch bet; see FUTURE.md "Frozen-triple numeric watch". Dropping
+    # grok (x-ai, 404s on the donated key) also ends routine personal-key forecaster
+    # spend: only the gemini-3.1-pro-preview personal-key PIN bills
+    # OPENROUTER_API_KEY now; the other two slots route via the donated key.
+    # (Dates anchor config eras for residual analysis.)
+    #
+    # OpenAI flagship (5.6 series). 2026-07-20: effort xhigh -> high. The
+    # reasoning-effort audit (scratch/reasoning_effort_audit_2026-07-20/) found
+    # default->high clearly worth it but high->xhigh UNMEASURED, so we stop paying
+    # the unmeasured premium here (the three slots measure within 12% of each other,
+    # $0.24 to $0.27 a question, 2026-09-09). opus-4.8 keeps xhigh below as the remaining premium bet
+    # (FUTURE.md "Price the high->xhigh reasoning-effort premium"). (2026-07-15
+    # had bumped this high -> xhigh.) Live-verified: OpenRouter's effort enum is
+    # max|xhigh|high|medium|low|minimal|none and this model accepts high (bogus
+    # values 400). NOTE: "max" is Anthropic-only — OpenAI's ceiling is xhigh and
+    # OpenAI rejects max upstream even though OpenRouter's enum validation admits it.
+    # 2026-09-22: sol -> gpt-6-sol (GPT-6 release) and high -> xhigh (operator), matching the
+    # Anthropic slot; a single prod-prompt timing probe checked it against FORECASTER_SOFT_DEADLINE.
+    _forecaster_slot(
+        "openrouter/openai/gpt-6-sol",
+        reasoning={"effort": "xhigh"},
+    ),
+    # Anthropic slot. 2026-07-15: enabled:True (provider-default adaptive thinking)
+    # -> explicit effort=xhigh. Anthropic also exposes "max" one tier above xhigh —
+    # held back deliberately for latency: unbounded adaptive thinking caused silent
+    # FORECASTER_SOFT_DEADLINE stalls on the retired opus-4.6 slot, e.g. Q14333 on
+    # 2026-05-07.
+    # 2026-09-22: opus-4.8 -> opus-5.5 (Anthropic release), and extra_body={"verbosity": "high"}
+    # REMOVED. On Anthropic, OpenRouter maps BOTH verbosity and reasoning.effort onto the one
+    # output_config.effort knob and "verbosity wins if both are passed" (OpenRouter Claude 4.7
+    # migration guide), so this slot had been running at effort HIGH, not the xhigh declared here,
+    # since at least 2026-02. Never send verbosity alongside reasoning.effort on an Anthropic slot.
+    _forecaster_slot(
+        "openrouter/anthropic/claude-opus-5.5",
+        reasoning={"effort": "xhigh"},
+    ),
+    # Google slot. No explicit reasoning-effort kwarg — gemini-3.1-pro-preview has
+    # no xhigh tier and uses provider defaults. PINNED to the personal
+    # OPENROUTER_API_KEY via the DONATED_KEY_BLOCKED_GOOGLE_MODELS blocklist in
+    # fallback_openrouter (the donated key routes it through a free-tier Google
+    # AI Studio BYOK integration with quota 0, so it would 429 there); see the
+    # TODO(gemini-3.1-pro-donated) tag pending the Metaculus-side BYOK fix.
+    _forecaster_slot("openrouter/google/gemini-3.1-pro-preview"),
+    # AkashML forecasters use Akash's API IDs after the provider prefix. Keep
+    # provider-default reasoning settings because Akash exposes model-specific
+    # reasoning controls rather than OpenRouter's common effort parameter.
+    _forecaster_slot("akashml/deepseek-ai/DeepSeek-V4-Flash"),
+    _forecaster_slot("akashml/zai-org/GLM-5.3"),
     _forecaster_slot(model)
     for model in (
         "nova-micro",

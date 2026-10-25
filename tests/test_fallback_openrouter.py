@@ -146,6 +146,20 @@ class TestPredicates:
         # silently changing routing.
         assert frozenset({"openai", "anthropic", "google"}) == DONATED_KEY_PROVIDERS
 
+    def test_akashml_models_are_routed_via_akashml_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AkashML model slugs are routed to the Akash key/base URL, not via OpenRouter."""
+        monkeypatch.setenv("AKASHML_API_KEY", "akash-key")
+        monkeypatch.setenv("AKASHML_API_BASE_URL", "https://api.akashml.com/v1")
+        assert should_route_via_donated_key("akashml/openai/gpt-4.1-mini") is False
+        llm = build_llm_with_openrouter_fallback(
+            "akashml/openai/gpt-4.1-mini",
+            role="forecaster:akash-openai",
+            temperature=None,
+        )
+        assert llm.model == "akashml/openai/gpt-4.1-mini"
+        assert llm.litellm_kwargs["api_key"] == "akash-key"
+        assert llm.litellm_kwargs["base_url"] == "https://api.akashml.com/v1"
+
     @pytest.mark.parametrize(
         ("message", "expected"),
         [
