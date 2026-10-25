@@ -69,7 +69,7 @@ def forecaster_role(model: str) -> str:
 
     The CREDIT_ROLE_SPEND spend line every roster slot books under. The roster is
     one slot per model vendor, so the VENDOR is the stable identity of a slot across
-    model rotations — a per-model role would start a new time series at every swap and
+    model rotations a per-model role would start a new time series at every swap and
     defeat the era-over-era cost comparison this exists for. OpenRouter and AkashML
     both use provider/vendor/model slugs.
     """
