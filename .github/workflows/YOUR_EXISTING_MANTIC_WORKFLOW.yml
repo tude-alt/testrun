@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""Install the AkashML routing repair into an existing forecasting repository.
+
+Uses only the Python standard library. Run with --check first to inspect the
+planned changes without writing files. Existing .env files are never touched.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import sys
+import tempfile
+import tokenize
+from datetime import datetime, timezone
+from uuid import uuid4
+
+
+BUNDLE_ROOT = Path(__file__).resolve().parent
+ORIGINAL_SHA256 = {
+    "metaculus_bot/llm_configs.py": (
+        "9681ea3d297d0e89dc44b66b1de365daec338b2fcdc5f4f90c706700675c9f87"
+    ),
+    "metaculus_bot/forecaster.py": (
+        "f90b5cfa44fedc3c88c28494c2121bfd6cd0d93a4265364decb8927ca2179653"
+    ),
+}
+COPY_PATHS = (
+    "metaculus_bot/akash_router.py",
+    "metaculus_bot/llm_configs.py",
+    "metaculus_bot/forecaster.py",
+    "scripts/check_akash_config.py",
+    "tests/test_akash_router.py",
+    ".env.mantic.example",
+)
+WORKFLOW_SOURCE = "workflow/mantic.yml"
+WORKFLOW_ORIGINAL_SHA256 = "35318ad7a2364baa2ef2522533490b5c7cd00fe582279b2fa83405527c0b9785"
+FACTORY_NAME = "build_llm_with_openrouter_fallback"
+OLD_MODULE = "metaculus_bot.fallback_openrouter"
+NEW_MODULE = "metaculus_bot.akash_router"
+
+
+class InstallError(Exception):
+    """A failed preflight or installation with an actionable explanation."""
+
+
+def normalized_text(data: bytes, label: str) -> str:
+    try:
+        return data.decode("utf-8").replace("\r\n", "\n")
+    except UnicodeDecodeError as exc:
+        raise InstallError(f"{label} is not UTF-8 text: {exc}") from exc
+
+
+def normalized_hash(data: bytes, label: str) -> str:
+    return hashlib.sha256(normalized_text(data, label).encode("utf-8")).hexdigest()
+
+
+def same_text(first: bytes, second: bytes, label: str) -> bool:
+    return normalized_text(first, label) == normalized_text(second, label)
+
+
+def safe_target(repo: Path, path: Path) -> Path:
+    """Reject paths outside the repository and symbolic-link write targets."""
+    candidate = path if path.is_absolute() else repo / path
+    candidate = Path(os.path.abspath(candidate))
+    try:
+        relative = candidate.relative_to(repo)
+    except ValueError as exc:
+        raise InstallError(f"Target is outside the repository: {candidate}") from exc
+    current = repo
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise InstallError(f"Refusing to replace a symbolic link: {current}")
+    if candidate.exists() and not candidate.is_file():
+        raise InstallError(f"Target is not a regular file: {candidate}")
+    return candidate
+
+
+def read_required_file(path: Path, purpose: str) -> bytes:
+    if not path.is_file():
+        raise InstallError(f"Missing {purpose}: {path}")
+    return path.read_bytes()
+
+
+def choose_workflow(repo: Path, specified: str | None) -> Path:
+    workflows = repo / ".github" / "workflows"
+    if specified is not None:
+        target = safe_target(repo, Path(specified))
+        try:
+            target.relative_to(workflows)
+        except ValueError as exc:
+            raise InstallError("--workflow must name a file inside .github/workflows/.") from exc
+        if target.suffix not in {".yml", ".yaml"}:
+            raise InstallError("--workflow must name an existing .yml or .yaml file.")
+        text = normalized_text(read_required_file(target, "Mantic workflow"), str(target))
+        if "--mode mantic" not in text:
+            raise InstallError(f"Selected workflow does not contain '--mode mantic': {target}")
+        return target
+
+    candidates: list[Path] = []
+    if workflows.is_dir():
+        for path in sorted(workflows.iterdir()):
+            if path.suffix not in {".yml", ".yaml"} or not path.is_file():
+                continue
+            target = safe_target(repo, path)
+            if "--mode mantic" in normalized_text(target.read_bytes(), str(target)):
+                candidates.append(target)
+    if len(candidates) != 1:
+        found = ", ".join(str(p.relative_to(repo)) for p in candidates) or "none"
+        raise InstallError(
+            "Expected exactly one existing .github/workflows/*.yml or *.yaml file "
+            f"containing '--mode mantic'; found {len(candidates)} ({found}). "
+            "Pass --workflow .github/workflows/YOUR_EXISTING_MANTIC_WORKFLOW.yml "
+            "to select it explicitly. This installer never creates a new scheduler."
+        )
+    return candidates[0]
+
+
+def choose_prediction_market(repo: Path) -> Path:
+    research = repo / "metaculus_bot" / "research"
+    candidates = sorted(research.rglob("prediction_market.py")) if research.is_dir() else []
+    candidates = [safe_target(repo, p) for p in candidates if p.is_file()]
+    if len(candidates) != 1:
+        found = ", ".join(str(p.relative_to(repo)) for p in candidates) or "none"
+        raise InstallError(
+            "Expected exactly one prediction_market.py in metaculus_bot/research/; "
+            f"found {len(candidates)} ({found}). The market factory import must be "
+            "reviewed for this repository layout before installing; no files were changed."
+        )
+    return candidates[0]
+
+
+def char_offset(lines: list[str], line_number: int, byte_column: int) -> int:
+    # AST column offsets count UTF-8 bytes, not Python Unicode characters.
+    prefix = lines[line_number - 1].encode("utf-8")[:byte_column].decode("utf-8")
+    return sum(len(line) for line in lines[: line_number - 1]) + len(prefix)
+
+
+def rewritten_import(node: ast.ImportFrom, source: str, indent: str) -> str:
+    moved = [alias for alias in node.names if alias.name == FACTORY_NAME]
+    remaining = [alias for alias in node.names if alias.name != FACTORY_NAME]
+    new_import = ast.unparse(ast.ImportFrom(module=NEW_MODULE, names=moved, level=0))
+    if not remaining:
+        # Preserve the original import's comments/layout in the common case.
+        if OLD_MODULE in source:
+            return source.replace(OLD_MODULE, NEW_MODULE, 1)
+        return new_import
+
+    old_import = ast.unparse(ast.ImportFrom(module=OLD_MODULE, names=remaining, level=0))
+    comments = [
+        token.string
+        for token in tokenize.generate_tokens(io.StringIO(source).readline)
+        if token.type == tokenize.COMMENT
+    ]
+    if indent.strip():
+        # A one-line suite or semicolon statement needs to remain in that suite.
+        if comments:
+            raise InstallError(
+                "The prediction-market import combines an inline suite and comments. "
+                "Split that import onto ordinary lines before running this installer."
+            )
+        return old_import + "; " + new_import
+    # Keep all other imported names, aliases, and any comments from the touched
+    # statement. Moving a comment within an import does not change its behavior.
+    statements = [*comments, old_import, new_import]
+    return ("\n" + indent).join(statements)
+
+
+def redirect_market_import(data: bytes, label: str) -> bytes:
+    text = normalized_text(data, label)
+    try:
+        tree = ast.parse(text, filename=label)
+    except SyntaxError as exc:
+        raise InstallError(f"Cannot parse {label}: {exc}") from exc
+    lines = text.splitlines(keepends=True)
+    replacements: list[tuple[int, int, str]] = []
+    already_routed = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.level:
+            continue
+        if not any(alias.name == FACTORY_NAME for alias in node.names):
+            continue
+        if node.module == NEW_MODULE:
+            already_routed = True
+            continue
+        if node.module != OLD_MODULE:
+            continue
+        if node.end_lineno is None or node.end_col_offset is None:
+            raise InstallError(f"Python could not locate the factory import in {label}.")
+        start = char_offset(lines, node.lineno, node.col_offset)
+        end = char_offset(lines, node.end_lineno, node.end_col_offset)
+        line_start = sum(len(line) for line in lines[: node.lineno - 1])
+        indent = text[line_start:start]
+        replacements.append((start, end, rewritten_import(node, text[start:end], indent)))
+    if not replacements:
+        if already_routed:
+            return data
+        raise InstallError(
+            f"No explicit '{FACTORY_NAME}' import from {OLD_MODULE} was found in {label}. "
+            "The provider must be reviewed and wired to metaculus_bot.akash_router "
+            "before using the new market model configuration; no files were changed."
+        )
+    for start, end, replacement in sorted(replacements, reverse=True):
+        text = text[:start] + replacement + text[end:]
+    try:
+        ast.parse(text, filename=label)
+    except SyntaxError as exc:
+        raise InstallError(f"Rewritten import in {label} failed syntax validation: {exc}") from exc
+    return text.encode("utf-8")
+
+
+def validate_python(path: Path, data: bytes) -> None:
+    if path.suffix != ".py":
+        return
+    try:
+        ast.parse(normalized_text(data, str(path)), filename=str(path))
+    except SyntaxError as exc:
+        raise InstallError(f"Staged Python file fails syntax validation: {path}: {exc}") from exc
+
+
+def prepare_changes(repo: Path, workflow: str | None) -> dict[Path, bytes]:
+    staged: dict[Path, bytes] = {}
+    for relative in COPY_PATHS:
+        desired = read_required_file(BUNDLE_ROOT / relative, "file from the repair bundle")
+        target = safe_target(repo, Path(relative))
+        if relative in ORIGINAL_SHA256:
+            current = read_required_file(target, "original repository file")
+            if not same_text(current, desired, relative):
+                if normalized_hash(current, relative) != ORIGINAL_SHA256[relative]:
+                    raise InstallError(
+                        f"{relative} differs from both the uploaded original and this repair. "
+                        "The repository has additional changes; review and merge this file "
+                        "manually instead of overwriting it. No files were changed."
+                    )
+        elif target.exists() and not same_text(target.read_bytes(), desired, relative):
+            raise InstallError(
+                f"{relative} already exists with different contents. Review that file "
+                "before installing this new module/example/test; no files were changed."
+            )
+        staged[target] = desired
+
+    market = choose_prediction_market(repo)
+    staged[market] = redirect_market_import(market.read_bytes(), str(market.relative_to(repo)))
+    workflow_target = choose_workflow(repo, workflow)
+    desired_workflow = read_required_file(BUNDLE_ROOT / WORKFLOW_SOURCE, "replacement workflow")
+    if "--mode mantic" not in normalized_text(desired_workflow, WORKFLOW_SOURCE):
+        raise InstallError("The bundled replacement workflow does not invoke '--mode mantic'.")
+    current_workflow = workflow_target.read_bytes()
+    workflow_label = workflow_target.relative_to(repo).as_posix()
+    if not same_text(current_workflow, desired_workflow, workflow_label):
+        if normalized_hash(current_workflow, workflow_label) != WORKFLOW_ORIGINAL_SHA256:
+            raise InstallError(
+                f"{workflow_label} differs from both the uploaded original workflow and "
+                "this repair. The workflow has additional changes; review and merge it "
+                "manually instead of overwriting it. No files were changed."
+            )
+    staged[workflow_target] = desired_workflow
+
+    for target, desired in staged.items():
+        validate_python(target, desired)
+    return {
+        target: desired
+        for target, desired in staged.items()
+        if not target.exists() or not same_text(target.read_bytes(), desired, str(target))
+    }
+
+
+def atomic_write(path: Path, data: bytes, mode: int = 0o644) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.akash-fix-", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary_path.chmod(mode)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def install_changes(repo: Path, changes: dict[Path, bytes]) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    backup_root = repo / ".akash-fix-backups"
+    if backup_root.is_symlink():
+        raise InstallError(f"Backup folder is a symbolic link: {backup_root}")
+    backup = backup_root / f"{stamp}-{uuid4().hex[:8]}"
+    backup.mkdir(parents=True, mode=0o700)
+    originals: dict[Path, tuple[bytes, int] | None] = {}
+    manifest: list[dict[str, str | bool]] = []
+    # Complete every backup before changing a repository file.
+    for path, desired in changes.items():
+        relative = path.relative_to(repo)
+        if path.exists():
+            original = path.read_bytes()
+            mode = stat.S_IMODE(path.stat().st_mode)
+            originals[path] = (original, mode)
+            backup_file = backup / relative
+            backup_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup_file)
+        else:
+            originals[path] = None
+        manifest.append(
+            {
+                "path": relative.as_posix(),
+                "existed": originals[path] is not None,
+                "new_sha256": hashlib.sha256(desired).hexdigest(),
+            }
+        )
+    (backup / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    written: list[Path] = []
+    try:
+        for path, desired in changes.items():
+            previous = originals[path]
+            atomic_write(path, desired, previous[1] if previous is not None else 0o644)
+            written.append(path)
+    except Exception as exc:
+        failures: list[str] = []
+        for path in reversed(written):
+            try:
+                previous = originals[path]
+                if previous is None:
+                    path.unlink()
+                else:
+                    atomic_write(path, previous[0], previous[1])
+            except OSError as rollback_error:
+                failures.append(f"{path}: {rollback_error}")
+        detail = "All completed file writes were rolled back."
+        if failures:
+            detail = "Some rollback writes failed: " + "; ".join(failures)
+        raise InstallError(f"Installation failed: {exc}. {detail} Backups: {backup}") from exc
+    return backup
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", required=True, help="Path to the existing forecasting repository.")
+    parser.add_argument(
+        "--workflow",
+        help="Existing Mantic workflow path, relative to --repo or an absolute path inside it.",
+    )
+    parser.add_argument("--check", action="store_true", help="Validate and show changes without writing.")
+    args = parser.parse_args(argv)
+    try:
+        repo = Path(args.repo).expanduser().resolve()
+        if not repo.is_dir() or not (repo / "metaculus_bot").is_dir():
+            raise InstallError("--repo must be an existing repository containing metaculus_bot/.")
+        changes = prepare_changes(repo, args.workflow)
+        if not changes:
+            print("The repair is already installed. No files changed.")
+            return 0
+        print(f"Validated {len(changes)} file changes in {repo}:")
+        for path in changes:
+            action = "replace" if path.exists() else "create"
+            print(f"  {action}: {path.relative_to(repo).as_posix()}")
+        if args.check:
+            print("Check complete. No files were written; no API requests or forecasts were made.")
+            return 0
+        backup = install_changes(repo, changes)
+        print(f"Installed {len(changes)} file changes. Original files are backed up at {backup}.")
+        print("Existing .env files were preserved. No API requests or forecasts were made.")
+        print("Run the checks in README.md before committing the changes.")
+        return 0
+    except (InstallError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
