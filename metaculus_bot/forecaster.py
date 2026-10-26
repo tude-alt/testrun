@@ -6,6 +6,11 @@ from collections.abc import Callable, Coroutine, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from metaculus_bot.config import load_environment
+
+# Load local flags/model overrides before importing modules that build LLMs.
+load_environment()
+
 from forecasting_tools import (
     BinaryQuestion,
     GeneralLlm,
@@ -32,7 +37,6 @@ from metaculus_bot.comment.formatting import (
     format_main_research_section,
     format_research_summary_with_models,
 )
-from metaculus_bot.config import load_environment
 from metaculus_bot.constants import (
     CONDITIONAL_STACKING_BINARY_PROB_RANGE_THRESHOLD,
     CONDITIONAL_STACKING_MC_MAX_OPTION_THRESHOLD,
@@ -98,7 +102,6 @@ logger = logging.getLogger(__name__)
 # Sort sentinel for a missing close_time, so the tightest-close-first sort never compares None to a datetime.
 _CLOSE_TIME_MAX = datetime.max.replace(tzinfo=UTC)
 
-load_environment()
 
 
 def _forecast_history_is_readable(question: MetaculusQuestion) -> bool:
