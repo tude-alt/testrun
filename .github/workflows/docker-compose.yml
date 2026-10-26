@@ -1,0 +1,308 @@
+# Zetaris platform -- multi-container deployment.
+#
+# Startup order is declared, not slept on:
+#
+#   postgres ──(healthy)──> driver ──(healthy)──> api ──(healthy)──> ui
+#        └── init ──(completed)──────┘                    └────> bootstrap
+#
+#
+# For an internal stack, build .env from the layers rather than editing it by hand:
+# `./env/make-env.sh --images release-2.4.3.1 --variant qa`. env/images/ records which image
+# a release runs. The `:-` defaults below are a fallback for older .env files, not the source
+# of truth, and two are moving tags -- do not read a version off this file.
+
+name: zetaris
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Metastore + audit databases.
+  #
+  # POSTGRES_DB creates `metastore`; initdb/10-audit.sql adds `audit`. Scripts in
+  # /docker-entrypoint-initdb.d run only while the data directory is empty, so this is a
+  # first-boot action.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Postgres holds the metastore and audit log. Stock shared_buffers is 128MB, which is
+    # the first thing to limit a large host. These are conservative fractions -- roughly 25%
+    # of the container's share for shared_buffers is the usual starting point.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1GB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-16MB}
+      - -c
+      - max_wal_size=2GB
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-zetaris}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set -- see .env}
+      POSTGRES_DB: metastore
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # Publishing 5432 is opt-in. It stays closed for the normal all-in-compose deployment,
+    # and is needed only when the driver and API run on the host instead of in containers.
+    # Bound to loopback: the metastore should never be reachable off the machine.
+    ports:
+      - "127.0.0.1:${POSTGRES_PUBLISH:-0}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1 and -d metastore are both load-bearing: they make this a real TCP check
+      # against a database that exists, so nothing starts before Postgres can actually serve.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-zetaris} -d metastore"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # One-shot: generates the field-encryption keypair and the internal token into a shared
+  # volume, and takes ownership of the volumes. Exits when done.
+  #
+  # The only service running as root, because a new volume belongs to root until something
+  # claims it.
+  init:
+    image: ${DRIVER_IMAGE:?set DRIVER_IMAGE in .env}
+    # Our images are built for amd64 only. Declaring it silences compose's
+    # "does not match the detected host platform ... and no specific platform
+    # was requested" warning, which fired on every Apple Silicon start and
+    # read as a failure. Nothing is hidden: preflight.sh reports the same fact
+    # and, unlike the warning, says where the Rosetta switch is and what it
+    # costs to leave it off. Not set on postgres or caddy — those are
+    # multi-arch and would be forced into emulation for nothing.
+    platform: linux/amd64
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/bash", "/init/generate-secrets.sh"]
+    volumes:
+      - driver-data:/home/zetaris/zetaris-ndp-driver/data
+      - driver-logs:/home/zetaris/zetaris-ndp-driver/logs
+      - customer-data:/home/zetaris/customer-data
+      - ./init:/init:ro
+
+  # ---------------------------------------------------------------------------
+  # Lightning driver: Thrift server on 10000, Spark UI on 4040.
+  driver:
+    image: ${DRIVER_IMAGE}
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    # A thin wrapper: writes the settings that only reach the driver through
+    # meta_store.properties, then execs the shipped launcher untouched. See the script.
+    entrypoint: ["/bin/bash", "/init/driver-entrypoint.sh"]
+    environment:
+      METASTORE_JDBC_URL: jdbc:postgresql://postgres:5432/metastore?user=${POSTGRES_USER:-zetaris}&password=${POSTGRES_PASSWORD}
+      AUDIT_LOG_JDBC_URL: jdbc:postgresql://postgres:5432/audit?user=${POSTGRES_USER:-zetaris}&password=${POSTGRES_PASSWORD}
+      NDP_TOKEN: /home/zetaris/zetaris-ndp-driver/data/tokens/ndp_token
+      ENCRYPTION_LOCAL_PRIVATE_KEY_PATH: /home/zetaris/zetaris-ndp-driver/data/passwordkeys/private_key.der
+      ENCRYPTION_LOCAL_PUBLIC_KEY_PATH: /home/zetaris/zetaris-ndp-driver/data/passwordkeys/public_key.der
+      # Run the query engine in the foreground, so the container lifecycle tracks the
+      # process rather than a detached child.
+      SPARK_NO_DAEMONIZE: "1"
+      SPARK_LOG_DIR: /home/zetaris/zetaris-ndp-driver/logs
+      SPARK_PID_DIR: /tmp
+      ZSPARK_MASTER_URL: ${ZSPARK_MASTER_URL:-local[*]}
+      ZSPARK_DRIVER_MEM: ${ZSPARK_DRIVER_MEM:-8g}
+      ZSPARK_DRIVER_CORES: ${ZSPARK_DRIVER_CORES:-4}
+      BASE_ENDPOINT: http://api:8889/
+      # Where the driver creates each organisation's storage tree. Must be the same shared
+      # volume the API reads through NDP_ROOT_PATH -- left unset the driver uses its own data
+      # directory, and the API returns 400 on every NDP File System call.
+      FILESYSTEM_STAGING: /home/zetaris/customer-data
+      NDP_ROOT_PATH: /home/zetaris/customer-data
+      ZETARIS_LOCAL_FILE_SYTEM_ROOT_PATH: /home/zetaris/customer-data/shared
+      PLATFORM_TYPE: vm
+      # The driver registers this organisation and administrator on first start.
+      ZETARIS_ADMIN_EMAIL: ${ZETARIS_ADMIN_EMAIL:-admin@zetaris.com}
+      ZETARIS_ADMIN_PASSWORD: ${ZETARIS_ADMIN_PASSWORD:?ZETARIS_ADMIN_PASSWORD must be set}
+      ZETARIS_ADMIN_ORG: ${ZETARIS_ADMIN_ORG:-zetaris}
+    volumes:
+      - ./init:/init:ro
+      # Spark tuning, editable without rebuilding anything. Spark reads this at startup.
+      - ./conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - customer-data:/home/zetaris/customer-data
+      - driver-data:/home/zetaris/zetaris-ndp-driver/data
+      # Driver and JVM logs. Persisted so they survive container recreation and can be
+      # inspected after a restart.
+      - driver-logs:/home/zetaris/zetaris-ndp-driver/logs
+    ports:
+      # Loopback: the Spark UI has no authentication, and the JDBC endpoint is plaintext.
+      # Neither should be reachable from the network the host happens to sit on.
+      - "127.0.0.1:${DRIVER_PORT:-10000}:10000"
+      - "127.0.0.1:${SPARK_UI_PORT:-4040}:4040"
+      # Publishing the Catalog REST port is OPT-IN and off by default: it has only a static
+      # bearer token in front of it. Set QUERY_HTTP_PUBLISH=8080 only when running the graph
+      # service on the host, and keep it bound to loopback.
+      - "127.0.0.1:${QUERY_HTTP_PUBLISH:-0}:8080"
+    healthcheck:
+      # Explicit bash: the probe uses a bash builtin to test the listener.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/10000"]
+      interval: 10s
+      timeout: 5s
+      # 180 x 10s = 1800s after start_period. Spark's first boot builds the metastore
+      # schema through Flyway, which is minutes on a slow or emulated host, and too small
+      # a budget marks the driver unhealthy and fails every dependent service behind a
+      # gate that would have opened. Deliberately generous: native amd64 is far quicker.
+      retries: 180
+      start_period: 180s
+
+  # ---------------------------------------------------------------------------
+  # API service: 8888 public, 8889 internal.
+  #
+  # group_add grants the driver's group, so this container can read the shared keypair and
+  # write the shared data tree while the keys stay group-restricted.
+  api:
+    image: ${API_IMAGE:?set API_IMAGE in .env}
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      driver:
+        condition: service_healthy
+    group_add:
+      - "1001"
+    environment:
+      METASTORE_DATABASE_URL: jdbc:postgresql://postgres:5432/metastore?user=${POSTGRES_USER:-zetaris}&password=${POSTGRES_PASSWORD}
+      AUDIT_LOG_DATABASE_URL: jdbc:postgresql://postgres:5432/audit?user=${POSTGRES_USER:-zetaris}&password=${POSTGRES_PASSWORD}
+      LIGHTNING_SERVER_URL: jdbc:zetaris:lightning@driver:10000
+      NDP_TOKEN: /home/zetaris/zetaris-ndp-driver/data/tokens/ndp_token
+      ENCRYPTION_LOCAL_PRIVATE_KEY_PATH: /home/zetaris/zetaris-ndp-driver/data/passwordkeys/private_key.der
+      ENCRYPTION_LOCAL_PUBLIC_KEY_PATH: /home/zetaris/zetaris-ndp-driver/data/passwordkeys/public_key.der
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      GUI_URL: ${GUI_URL:-http://localhost:3000}
+      NDP_ROOT_PATH: /home/zetaris/customer-data
+      ZETARIS_LOCAL_FILE_SYTEM_ROOT_PATH: /home/zetaris/customer-data/shared
+      # The API launcher reads JAVA_OPTS. Left unset the JVM sizes itself from whatever
+      # memory it can see, which on a large host is both oversized and unpredictable.
+      # ExitOnOutOfMemoryError so an exhausted heap restarts the container instead of
+      # limping along in a degraded state.
+      JAVA_OPTS: -Xms256m -Xmx${ZETARIS_API_MAX_HEAP:-2g} -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError
+      LIGHTNING_API_DEPLOY_MODE: internal
+      PLATFORM_TYPE: vm
+      # Anonymous liveness reporting. The id is minted by init on first start and
+      # says nothing about who you are; see .env for what is sent and how
+      # to turn it off.
+      INSTALL_ID_PATH: /home/zetaris/zetaris-ndp-driver/data/install-id
+      # Shipped in .env, the same in every bundle. Sent joined to this install's
+      # own id so Zetaris can tell a real bundle from an invented report.
+      TELEMETRY_KEY: ${TELEMETRY_KEY:-}
+      TELEMETRY_URL: ${TELEMETRY_URL:-https://cloud-api.enterprise.zetaris.com/api/v1.0/hackathon}
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-}
+      # Must stay a number. Compose passes an unset variable as the empty
+      # string, which is *defined*, so application.conf's `${?VAR}` override
+      # fires and replaces the default with "" -- and the API dies at startup
+      # on a PureConfig Int read. The first beat is staggered across the window.
+      TELEMETRY_INTERVAL_MINUTES: ${TELEMETRY_INTERVAL_MINUTES:-120}
+    volumes:
+      # Read-only: exactly one writer (the driver) for the shared keypair and token.
+      - driver-data:/home/zetaris/zetaris-ndp-driver/data:ro
+      - customer-data:/home/zetaris/customer-data
+    ports:
+      # Loopback. 8889 carries an internal login route that must not be reachable from the
+      # network; with the tls overlay in front, neither port needs publishing at all.
+      - "127.0.0.1:${API_PORT:-8888}:8888"
+      - "127.0.0.1:${API_INTERNAL_PORT:-8889}:8889"
+    healthcheck:
+      # Any HTTP response means the service is answering; the check is deliberately not
+      # tied to a specific endpoint.
+      test: ["CMD-SHELL", "curl -sS -o /dev/null http://127.0.0.1:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 180
+      start_period: 120s
+
+  # ---------------------------------------------------------------------------
+  # Web UI. LIGHTNING_API_HOST is a bare service name;
+  # the app appends :8888 for the public API and :8889 for the internal login route.
+  ui:
+    image: ${UI_IMAGE:?set UI_IMAGE in .env}
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      LIGHTNING_API_HOST: api
+      # Airflow and notebooks are not part of this deployment, and the UI shows both menu
+      # rows unless it is told otherwise. Off explicitly: left unset they default to on and
+      # the rows lead nowhere.
+      APACHE_AIRFLOW_ENABLED: "false"
+      ENABLED_ZEPPELIN: "false"
+    ports:
+      - "${UI_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # One-shot: the sample data, registered as the administrator.
+  bootstrap:
+    image: ${DRIVER_IMAGE}
+    platform: linux/amd64
+    restart: "no"
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/init/bootstrap-admin.sh"]
+    environment:
+      METASTORE_JDBC_URL: jdbc:postgresql://postgres:5432/metastore?user=${POSTGRES_USER:-zetaris}&password=${POSTGRES_PASSWORD}
+      AUDIT_LOG_JDBC_URL: jdbc:postgresql://postgres:5432/audit?user=${POSTGRES_USER:-zetaris}&password=${POSTGRES_PASSWORD}
+      NDP_TOKEN: /home/zetaris/zetaris-ndp-driver/data/tokens/ndp_token
+      ENCRYPTION_LOCAL_PRIVATE_KEY_PATH: /home/zetaris/zetaris-ndp-driver/data/passwordkeys/private_key.der
+      ENCRYPTION_LOCAL_PUBLIC_KEY_PATH: /home/zetaris/zetaris-ndp-driver/data/passwordkeys/public_key.der
+      ZETARIS_ADMIN_EMAIL: ${ZETARIS_ADMIN_EMAIL:-admin@zetaris.com}
+      ZETARIS_ADMIN_PASSWORD: ${ZETARIS_ADMIN_PASSWORD:?ZETARIS_ADMIN_PASSWORD must be set}
+      # Must match the driver: the seed runs a Lightning session against the same storage.
+      FILESYSTEM_STAGING: /home/zetaris/customer-data
+      NDP_ROOT_PATH: /home/zetaris/customer-data
+      ZETARIS_LOCAL_FILE_SYTEM_ROOT_PATH: /home/zetaris/customer-data/shared
+      ZSPARK_MASTER_URL: local[1]
+      ZSPARK_DRIVER_MEM: 1g
+    volumes:
+      - driver-data:/home/zetaris/zetaris-ndp-driver/data
+      - driver-logs:/home/zetaris/zetaris-ndp-driver/logs
+      - customer-data:/home/zetaris/customer-data
+      - ./init:/init:ro
+
+  # HTTPS front end, started only when COMPOSE_PROFILES=tls. A browser will not run the
+  # interface over plain HTTP at anything but localhost, so any machine reached by name or
+  # address needs this; a laptop reached at localhost does not.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      ui:
+        condition: service_healthy
+    environment:
+      # A plain default, not `:?`. Compose interpolates every service whether or not its
+      # profile is active, so a required marker here breaks `up` for everyone not using tls.
+      ZETARIS_PUBLIC_HOST: ${ZETARIS_PUBLIC_HOST:-}
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pgdata:
+  caddy-data:
+  caddy-config:
+  driver-logs:
+  customer-data:
+  driver-data:
