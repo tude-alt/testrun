@@ -1,24 +1,9 @@
-# Mantic "Crucible" (https://competitions.mantic.com) is a bot-only forecasting competition
-# run on a fork of the open-source Metaculus platform, so the bot's whole pipeline runs
-# unchanged behind `--mode mantic` with the platform client swapped (metaculus_bot/mantic.py;
-# design in docs/operations.md "Mantic"). It forecasts the tournament named by
-# MANTIC_TOURNAMENT_ID in constants.py.
-#
-# Personal keys ONLY. Metaculus donates its OpenRouter key for its own tournaments, so this
-# workflow never receives that secret (tests/test_workflow_reliability.py pins its absence
-# from this file's raw text, so do not name it even in a comment) and forces both
-# donated-routing flags off; cli refuses to start a Mantic run while
-# DONATED_OPENROUTER_KEY_ENABLED still reads true. There is no Metaculus token here either:
-# a Mantic run must not depend on Metaculus at all.
-# Consequence: with a single OpenRouter key there is no key-swap fallback, so a personal-key
-# 401/402/429 is a hard failure of the question by design.
-#
-# Merging this file to main auto-enables the schedule: GitHub runs a new scheduled workflow
-# as soon as its file is on the default branch, unless someone disables it in the Actions
-# UI. The MANTIC_TOKEN repository secret is set; the remaining operator steps (one paid
-# per-bin smoke on post 651, then the merge) are listed in docs/operations.md "Running it,
-# and what is left for the operator". Every run spends the personal OpenRouter and research
-# keys (about $3 per question; the post-650 smoke spent $3.17) and publishes to Mantic.
+# Mantic Crucible forecasting. AkashML is the primary inference provider;
+# personal OpenRouter credentials are the fallback. Research providers keep
+# their own credentials and capabilities.
+# Replace the EXISTING Mantic workflow with this file; adding another workflow
+# would create a second scheduled publisher.
+# Both donated-routing switches stay off for Mantic.
 name: Forecast on Mantic tournament
 
 on:
@@ -56,6 +41,16 @@ jobs:
     # slow-but-recovering run in the second it was about to publish, which is the
     # forfeit we are trying to prevent. Worst job measured in the era: 11.3 min.
     timeout-minutes: 80
+    env:
+      # Required for both the preflight and the forecasting step.
+      MANTIC_TOKEN: ${{ secrets.MANTIC_TOKEN }}
+      AKASHML_API_KEY: ${{ secrets.akashml_api_key }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      DONATED_OPENROUTER_KEY_ENABLED: 'false'
+      GEMINI_USE_DONATED_OPENROUTER_KEY: 'false'
+      # Optional: set BOTH AKASHML_FORECAST_MODELS and
+      # OPENROUTER_FORECAST_MODELS here as comma-separated model IDs.
+      # Omit both to use the paired defaults in llm_configs.py.
     steps: # sets up the steps that will be run in order
       # Every step below carries its own timeout-minutes. The job cap is the wrong
       # instrument for a hang: it fires late, it reports `cancelled` (indistinguishable
@@ -76,6 +71,27 @@ jobs:
       - name: Install dependencies
         timeout-minutes: 10
         run: uv sync --no-dev --frozen
+      - name: Check Python syntax
+        timeout-minutes: 5
+        run: uv run --frozen --no-dev python -m compileall -q main.py metaculus_bot scripts/check_akash_config.py
+      - name: Check required credentials
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          uv run --frozen --no-dev python - <<'PY'
+          import os
+          import sys
+
+          required = ("MANTIC_TOKEN", "AKASHML_API_KEY", "OPENROUTER_API_KEY")
+          missing = [name for name in required if not os.getenv(name, "").strip()]
+          if missing:
+              print("::error::Missing required Actions secrets: " + ", ".join(missing))
+              sys.exit(1)
+          print("Required Mantic and inference credentials are present.")
+          PY
+      - name: Check AkashML routing configuration
+        timeout-minutes: 5
+        run: uv run --frozen --no-dev python scripts/check_akash_config.py --mantic
       # Chromium for gap-fill v2's rendered-fetch rung (playwright). --with-deps
       # pulls the system libraries chromium needs on ubuntu runners. The loop
       # degrades to plain fetch if the browser is missing, so this step is
@@ -98,11 +114,8 @@ jobs:
         run: echo "::warning title=Playwright install failed::Chromium install failed. The gap-fill v2 rendered-fetch rung will degrade to plain fetch this run. Transient apt/CDN blips are common; investigate only if this recurs."
       - name: Run bot
         shell: bash
-        # Repo is public, so uploaded artifacts are effectively public. Log content
-        # (question URLs, predictions, degradation counters) is the same class of
-        # content the Metaculus workflows already expose: acceptable, no redaction.
-        # A secret-leakage audit passed: no logger emits credentials; keys travel only
-        # in request headers.
+        # Logs and research outputs are uploaded below. Keep credential values
+        # out of log messages; the preflight prints only missing variable names.
         # shell: bash yields `set -eo pipefail`, so the `python | tee` pipeline
         # preserves the intentional sys.exit(1) degradation alert (cli.py ~L186);
         # a bare `run:` (bash -e, no pipefail) would swallow it as tee's exit 0.
@@ -121,13 +134,9 @@ jobs:
           # Unbuffered stdout/stderr so log lines stream in real time and nothing
           # is lost if the run crashes before a buffer flush.
           PYTHONUNBUFFERED: '1'
-          # The bot's personal Mantic token (bot user nostreambot-bot). The only platform
-          # credential in this workflow; there is deliberately no Metaculus token.
-          MANTIC_TOKEN: ${{ secrets.MANTIC_TOKEN }}
+          # Mantic and inference credentials are inherited from the job env.
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          # Exa semantic search (gap-fill v2's search_web tool; also the legacy
-          # SmartSearcher fallback path). Secret name is lowercase exa_key
-          # (funded 2026-07-16).
+          # Exa semantic search for the existing research pipeline.
           EXA_API_KEY: ${{ secrets.exa_key }}
           NIMBLE_API_KEY: ${{ secrets.NIMBLE_API_KEY }}
           YDC_API_KEY: ${{ secrets.YDC_API_KEY }}
@@ -136,14 +145,6 @@ jobs:
           AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
           AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # The ONE OpenRouter key here: the operator's personal key. The
-          # Metaculus-donated key is deliberately not wired (see the header comment),
-          # and the master switch below makes cli fail shut if a future edit re-enables
-          # donated routing without also re-adding the secret.
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          AKASHML_API_KEY: ${{ secrets.akashml_api_key }}
-          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
-          DONATED_OPENROUTER_KEY_ENABLED: 'false'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
           ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
@@ -169,8 +170,7 @@ jobs:
           GEMINI_OPENROUTER_MODEL: google/gemini-3.1-pro-preview
           GEMINI_SEARCH_MODEL: gemini-3.1-pro-preview
           GEMINI_SEARCH_ENABLED: 'true'
-          # Second-pass gap-fill: analyzer identifies gaps in first-pass research,
-          # parallel grounded Gemini searches resolve each. Fails soft.
+          # Preserve both existing gap-fill research paths.
           GAP_FILL_ENABLED: 'true'
           # Agentic gap-fill v2 (bounded research loop; runs concurrently with
           # v1 when both are on). ON since 2026-07-17 after smoke + blind driver
@@ -193,7 +193,7 @@ jobs:
           RESOLUTION_SOURCE_ENABLED: 'true'
           # The ladder's one PAID rung: when every free rung has failed to read a
           # cited page, Gemini's url_context reader is asked to read it, billed to
-          # GOOGLE_API_KEY above. ON since 2026-09-04. Bounded by the free
+          # the configured personal Google credentials. Bounded by the free
           # Google-Extended robots pre-check, the rung's wall-budget floor and
           # RESOLUTION_SOURCE_URL_CONTEXT_MAX_ATTEMPTS paid reads per question.
           RESOLUTION_SOURCE_URL_CONTEXT_ENABLED: 'true'
